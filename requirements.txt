@@ -1,0 +1,6 @@
+streamlit
+openai
+requests
+beautifulsoup4
+pypdf
+duckduckgo-search>=5.0.0
