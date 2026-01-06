@@ -275,14 +275,17 @@ Content:
         "sports": """You are a high school sports reporter. Write a "Mustang Sports Minute" based on the following game information about Sachse High School athletics.
 
 Focus on:
-- Recent game scores and results
 - Standout performances (if mentioned)
 - Upcoming important games this week
 - Overall team records and momentum
+- Use bullet points to list recent game outcomes with scores
 
 Organize into two sections:
 1. **Recent Results** - Summarize recent game outcomes
-2. **This Week's Schedule** - List upcoming games with opponents and times
+2. **This Week's Schedule** 
+- Use bullet points to list upcoming games
+- Include: Day, opponent, time, and sport
+- Format: "Day: Sport vs/@ Opponent - Time"
 
 Write in an energetic, positive style. Keep it concise (150-250 words).
 
