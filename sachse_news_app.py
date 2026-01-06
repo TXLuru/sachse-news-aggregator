@@ -157,14 +157,52 @@ def scrape_school_board_agenda(debug=False):
 
 
 def search_sports_news(debug=False):
-    """Search for Sachse High School Mustangs sports news."""
+    """Search for Sachse High School Mustangs sports news via ScoreStream."""
     import time
     
     try:
+        # Try ScoreStream widget data first
+        widget_url = "https://scorestream.com/apiJsCdn/widgets/embed.js"
+        widget_id = "67799"
+        
+        # ScoreStream uses a specific API endpoint for widget data
+        api_url = f"https://scorestream.com/api/widget.json?id={widget_id}"
+        
+        response = requests.get(api_url, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        
+        if debug:
+            debug_info = f"ScoreStream API URL: {api_url}\n\n"
+            debug_info += f"Response Status: {response.status_code}\n\n"
+            debug_info += f"Raw Data: {str(data)[:1000]}\n"
+            return None, debug_info
+        
+        # Parse ScoreStream data
+        combined_text = "Recent Sachse High School Mustangs Sports Updates:\n\n"
+        
+        if 'games' in data:
+            for i, game in enumerate(data['games'][:10], 1):
+                home_team = game.get('homeTeam', {}).get('name', 'Unknown')
+                away_team = game.get('awayTeam', {}).get('name', 'Unknown')
+                home_score = game.get('homeScore', '')
+                away_score = game.get('awayScore', '')
+                game_date = game.get('gameDate', '')
+                status = game.get('status', '')
+                
+                combined_text += f"Game {i}: {away_team} @ {home_team}\n"
+                if home_score and away_score:
+                    combined_text += f"Score: {away_team} {away_score} - {home_team} {home_score}\n"
+                combined_text += f"Date: {game_date}, Status: {status}\n\n"
+        
+        if len(combined_text) > 100:
+            return combined_text[:8000], None
+        
+        # Fallback to DuckDuckGo if ScoreStream fails
+        st.write("ScoreStream unavailable, falling back to DuckDuckGo...")
         ddgs = DDGS()
         query = "Sachse High School Mustangs sports results last week"
         
-        # Try with retries for rate limiting
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -172,25 +210,13 @@ def search_sports_news(debug=False):
                 break
             except Exception as e:
                 if "Ratelimit" in str(e) and attempt < max_retries - 1:
-                    time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+                    time.sleep(2 ** attempt)
                     continue
                 else:
                     raise
         
-        if debug:
-            debug_info = f"Query: {query}\n\n"
-            debug_info += f"Number of results: {len(results) if results else 0}\n\n"
-            if results:
-                debug_info += "=== Search Results ===\n"
-                for i, result in enumerate(results, 1):
-                    debug_info += f"\nResult {i}:\n"
-                    debug_info += f"  Title: {result.get('title', 'N/A')}\n"
-                    debug_info += f"  URL: {result.get('href', 'N/A')}\n"
-                    debug_info += f"  Body: {result.get('body', 'N/A')[:200]}\n"
-            return None, debug_info
-        
         if not results:
-            return None, "No search results returned"
+            return None, "No search results returned from DuckDuckGo"
         
         combined_text = ""
         for i, result in enumerate(results, 1):
@@ -198,10 +224,10 @@ def search_sports_news(debug=False):
             combined_text += f"{result.get('body', '')}\n\n"
         
         return combined_text[:8000], None
+        
     except Exception as e:
         error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
         
-        # If rate limited, provide helpful message
         if "Ratelimit" in str(e):
             error_details += "\n\nDuckDuckGo is rate limiting requests. Wait a few minutes and try again, or search manually at: https://www.maxpreps.com/tx/sachse/sachse-mustangs/"
         
@@ -308,8 +334,9 @@ def main():
         
         if not use_selenium:
             uploaded_council_pdf = st.sidebar.file_uploader(
-                "Or upload Council PDF manually",
+                "Or upload Council PDF(s) manually",
                 type=['pdf'],
+                accept_multiple_files=True,
                 help="Download from https://sachsetx.portal.civicclerk.com/"
             )
     
@@ -348,16 +375,18 @@ def main():
                 council_text = None
                 
                 if uploaded_council_pdf:
-                    st.write("Processing uploaded PDF...")
+                    st.write(f"Processing {len(uploaded_council_pdf)} uploaded PDF(s)...")
                     try:
-                        pdf_file = BytesIO(uploaded_council_pdf.read())
-                        reader = PdfReader(pdf_file)
-                        text = ""
-                        max_pages = min(50, len(reader.pages))
-                        for i in range(max_pages):
-                            text += reader.pages[i].extract_text()
-                        if len(text.strip()) > 100:
-                            council_text = text[:15000]
+                        combined_text = ""
+                        for pdf_file_upload in uploaded_council_pdf:
+                            pdf_file = BytesIO(pdf_file_upload.read())
+                            reader = PdfReader(pdf_file)
+                            max_pages = min(50, len(reader.pages))
+                            for i in range(max_pages):
+                                combined_text += reader.pages[i].extract_text()
+                        
+                        if len(combined_text.strip()) > 100:
+                            council_text = combined_text[:15000]
                     except Exception as e:
                         council_error = f"Error processing uploaded PDF: {str(e)}"
                 else:
