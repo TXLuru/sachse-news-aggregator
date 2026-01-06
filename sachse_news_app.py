@@ -12,9 +12,8 @@ from datetime import datetime
 def scrape_city_council_agenda(debug=False):
     """Scrape the latest City Council meeting agenda packet."""
     try:
-        # The Sachse city portal appears to be JavaScript-rendered
-        # Alternative approach: Try the direct agenda center URL
-        url = "https://sachsetx.gov/AgendaCenter"
+        # Try the main Sachse website agendas page first
+        url = "https://www.cityofsachse.com/328/Agendas-Minutes-and-Videos"
         response = requests.get(url, timeout=30, allow_redirects=True)
         response.raise_for_status()
         
@@ -22,51 +21,63 @@ def scrape_city_council_agenda(debug=False):
         
         if debug:
             debug_info = f"URL: {url}\n\n"
-            debug_info += f"Final URL after redirects: {response.url}\n\n"
             debug_info += f"Response Status: {response.status_code}\n\n"
             debug_info += "=== All links found ===\n"
             all_links = soup.find_all('a', href=True)
             debug_info += f"Total links: {len(all_links)}\n\n"
-            for idx, link in enumerate(all_links[:30]):
+            
+            civicclerk_links = [link for link in all_links if 'civicclerk' in link.get('href', '').lower()]
+            debug_info += f"\n=== CivicClerk links ({len(civicclerk_links)}) ===\n"
+            for idx, link in enumerate(civicclerk_links[:10]):
                 debug_info += f"Link {idx}: {link.get_text(strip=True)[:100]} -> {link.get('href')}\n"
             
-            debug_info += "\n=== Looking for PDF links ===\n"
             pdf_links = [link for link in all_links if '.pdf' in link.get('href', '').lower()]
-            debug_info += f"Found {len(pdf_links)} PDF links\n"
+            debug_info += f"\n=== PDF links ({len(pdf_links)}) ===\n"
             for idx, link in enumerate(pdf_links[:10]):
                 debug_info += f"PDF {idx}: {link.get_text(strip=True)[:100]} -> {link.get('href')}\n"
             
             return None, debug_info
         
-        # Look for City Council agenda PDFs
+        # Look for links to CivicClerk or direct PDF agenda links
         all_links = soup.find_all('a', href=True)
         
+        # First try to find direct PDF links on this page
         for link in all_links:
             href = link.get('href', '')
             link_text = link.get_text(strip=True).lower()
             
-            # Look for City Council agenda packets
-            if ('city council' in link_text or 'council' in link_text) and '.pdf' in href.lower():
+            if '.pdf' in href.lower() and ('agenda' in link_text or 'packet' in link_text):
                 pdf_url = href
                 if not pdf_url.startswith('http'):
-                    pdf_url = f"https://sachsetx.gov{pdf_url}"
+                    pdf_url = f"https://www.cityofsachse.com{pdf_url}"
                 
                 # Download and extract PDF
-                pdf_response = requests.get(pdf_url, timeout=60)
-                pdf_response.raise_for_status()
-                
-                pdf_file = BytesIO(pdf_response.content)
-                reader = PdfReader(pdf_file)
-                
-                text = ""
-                max_pages = min(50, len(reader.pages))
-                for i in range(max_pages):
-                    text += reader.pages[i].extract_text()
-                
-                if len(text.strip()) > 100:  # Make sure we got actual content
-                    return text[:15000], None
+                try:
+                    pdf_response = requests.get(pdf_url, timeout=60)
+                    pdf_response.raise_for_status()
+                    
+                    pdf_file = BytesIO(pdf_response.content)
+                    reader = PdfReader(pdf_file)
+                    
+                    text = ""
+                    max_pages = min(50, len(reader.pages))
+                    for i in range(max_pages):
+                        text += reader.pages[i].extract_text()
+                    
+                    if len(text.strip()) > 100:
+                        return text[:15000], None
+                except:
+                    continue
         
-        return None, "No City Council agenda PDF found. The site may use JavaScript rendering."
+        # If no PDFs found, look for CivicClerk link to follow
+        for link in all_links:
+            href = link.get('href', '')
+            if 'civicclerk' in href.lower():
+                # This is a link to the CivicClerk portal
+                # Note: CivicClerk requires JavaScript, so we can't scrape it directly
+                return None, "City Council uses CivicClerk which requires JavaScript. The site shows agendas at: https://sachsetx.portal.civicclerk.com/ but cannot be scraped with basic tools."
+        
+        return None, "No City Council agenda found on the main website."
     except Exception as e:
         error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
         return None, error_details
