@@ -12,63 +12,61 @@ from datetime import datetime
 def scrape_city_council_agenda(debug=False):
     """Scrape the latest City Council meeting agenda packet."""
     try:
-        url = "https://sachsetx.portal.civicclerk.com/"
-        response = requests.get(url, timeout=30)
+        # The Sachse city portal appears to be JavaScript-rendered
+        # Alternative approach: Try the direct agenda center URL
+        url = "https://sachsetx.gov/AgendaCenter"
+        response = requests.get(url, timeout=30, allow_redirects=True)
         response.raise_for_status()
         
         soup = BeautifulSoup(response.content, 'html.parser')
         
         if debug:
-            # Show what we're finding
             debug_info = f"URL: {url}\n\n"
+            debug_info += f"Final URL after redirects: {response.url}\n\n"
             debug_info += f"Response Status: {response.status_code}\n\n"
-            debug_info += "=== Available table rows ===\n"
-            all_rows = soup.find_all('tr')
-            debug_info += f"Found {len(all_rows)} total <tr> elements\n\n"
-            
-            for idx, row in enumerate(all_rows[:10]):  # First 10 rows
-                debug_info += f"Row {idx}:\n"
-                debug_info += f"  Classes: {row.get('class', [])}\n"
-                debug_info += f"  Text: {row.get_text(strip=True)[:200]}\n\n"
-            
-            debug_info += "\n=== All links found ===\n"
+            debug_info += "=== All links found ===\n"
             all_links = soup.find_all('a', href=True)
-            for idx, link in enumerate(all_links[:20]):  # First 20 links
+            debug_info += f"Total links: {len(all_links)}\n\n"
+            for idx, link in enumerate(all_links[:30]):
                 debug_info += f"Link {idx}: {link.get_text(strip=True)[:100]} -> {link.get('href')}\n"
+            
+            debug_info += "\n=== Looking for PDF links ===\n"
+            pdf_links = [link for link in all_links if '.pdf' in link.get('href', '').lower()]
+            debug_info += f"Found {len(pdf_links)} PDF links\n"
+            for idx, link in enumerate(pdf_links[:10]):
+                debug_info += f"PDF {idx}: {link.get_text(strip=True)[:100]} -> {link.get('href')}\n"
             
             return None, debug_info
         
-        # Find all meeting rows - looking for City Council meetings
-        meeting_rows = soup.find_all('tr', class_='meeting-row')
+        # Look for City Council agenda PDFs
+        all_links = soup.find_all('a', href=True)
         
-        for row in meeting_rows:
-            meeting_title = row.find('td', class_='meeting-title')
-            if meeting_title and 'City Council' in meeting_title.get_text():
-                # Found a City Council meeting, now find the Agenda Packet link
-                links = row.find_all('a')
-                for link in links:
-                    link_text = link.get_text(strip=True)
-                    if 'Agenda Packet' in link_text or 'Packet' in link_text:
-                        pdf_url = link.get('href')
-                        if not pdf_url.startswith('http'):
-                            pdf_url = f"https://sachsetx.portal.civicclerk.com{pdf_url}"
-                        
-                        # Download and extract PDF text
-                        pdf_response = requests.get(pdf_url, timeout=60)
-                        pdf_response.raise_for_status()
-                        
-                        pdf_file = BytesIO(pdf_response.content)
-                        reader = PdfReader(pdf_file)
-                        
-                        # Extract first 50 pages
-                        text = ""
-                        max_pages = min(50, len(reader.pages))
-                        for i in range(max_pages):
-                            text += reader.pages[i].extract_text()
-                        
-                        return text[:15000], None  # Success, no error
+        for link in all_links:
+            href = link.get('href', '')
+            link_text = link.get_text(strip=True).lower()
+            
+            # Look for City Council agenda packets
+            if ('city council' in link_text or 'council' in link_text) and '.pdf' in href.lower():
+                pdf_url = href
+                if not pdf_url.startswith('http'):
+                    pdf_url = f"https://sachsetx.gov{pdf_url}"
+                
+                # Download and extract PDF
+                pdf_response = requests.get(pdf_url, timeout=60)
+                pdf_response.raise_for_status()
+                
+                pdf_file = BytesIO(pdf_response.content)
+                reader = PdfReader(pdf_file)
+                
+                text = ""
+                max_pages = min(50, len(reader.pages))
+                for i in range(max_pages):
+                    text += reader.pages[i].extract_text()
+                
+                if len(text.strip()) > 100:  # Make sure we got actual content
+                    return text[:15000], None
         
-        return None, "No City Council meeting with Agenda Packet found"
+        return None, "No City Council agenda PDF found. The site may use JavaScript rendering."
     except Exception as e:
         error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
         return None, error_details
@@ -86,38 +84,39 @@ def scrape_school_board_agenda(debug=False):
         if debug:
             debug_info = f"URL: {url}\n\n"
             debug_info += f"Response Status: {response.status_code}\n\n"
-            debug_info += "=== All links found ===\n"
+            debug_info += "=== All Agenda links found ===\n"
             all_links = soup.find_all('a', href=True)
-            for idx, link in enumerate(all_links[:30]):  # First 30 links
-                debug_info += f"Link {idx}: {link.get_text(strip=True)[:100]} -> {link.get('href')}\n"
-            
-            debug_info += "\n=== Page title ===\n"
-            title = soup.find('title')
-            if title:
-                debug_info += f"{title.get_text()}\n"
+            agenda_links = [link for link in all_links if 'Agenda' in link.get_text()]
+            debug_info += f"Found {len(agenda_links)} agenda links\n\n"
+            for idx, link in enumerate(agenda_links[:10]):
+                debug_info += f"Agenda {idx}: {link.get_text(strip=True)} -> {link.get('href')}\n"
             
             return None, debug_info
         
-        # Look for meeting links - typically "Regular Meeting"
-        meeting_links = soup.find_all('a', href=True)
+        # Find the first "Agenda" link (most recent meeting)
+        all_links = soup.find_all('a', href=True)
         
-        for link in meeting_links:
+        for link in all_links:
             link_text = link.get_text(strip=True)
-            if 'Regular Meeting' in link_text or 'Board Meeting' in link_text:
-                meeting_url = link.get('href')
-                if not meeting_url.startswith('http'):
-                    meeting_url = f"https://meetings.boardbook.org{meeting_url}"
+            if link_text == 'Agenda':  # Exact match for "Agenda" link
+                agenda_url = link.get('href')
+                if not agenda_url.startswith('http'):
+                    agenda_url = f"https://meetings.boardbook.org{agenda_url}"
                 
-                # Visit the meeting page to find PDF
-                meeting_response = requests.get(meeting_url, timeout=30)
-                meeting_response.raise_for_status()
-                meeting_soup = BeautifulSoup(meeting_response.content, 'html.parser')
+                # Visit the agenda page
+                agenda_response = requests.get(agenda_url, timeout=30)
+                agenda_response.raise_for_status()
+                agenda_soup = BeautifulSoup(agenda_response.content, 'html.parser')
                 
-                # Find PDF links
-                pdf_links = meeting_soup.find_all('a', href=True)
+                # Look for PDF download links on the agenda page
+                pdf_links = agenda_soup.find_all('a', href=True)
+                
                 for pdf_link in pdf_links:
-                    href = pdf_link.get('href')
-                    if '.pdf' in href.lower() or 'agenda' in pdf_link.get_text().lower():
+                    href = pdf_link.get('href', '')
+                    pdf_text = pdf_link.get_text(strip=True).lower()
+                    
+                    # Look for PDF downloads
+                    if '.pdf' in href.lower() or 'download' in pdf_text or 'pdf' in pdf_text:
                         pdf_url = href
                         if not pdf_url.startswith('http'):
                             pdf_url = f"https://meetings.boardbook.org{pdf_url}"
@@ -126,17 +125,27 @@ def scrape_school_board_agenda(debug=False):
                         pdf_response = requests.get(pdf_url, timeout=60)
                         pdf_response.raise_for_status()
                         
-                        pdf_file = BytesIO(pdf_response.content)
-                        reader = PdfReader(pdf_file)
-                        
-                        text = ""
-                        max_pages = min(50, len(reader.pages))
-                        for i in range(max_pages):
-                            text += reader.pages[i].extract_text()
-                        
-                        return text[:15000], None  # Success, no error
+                        # Check if it's actually a PDF
+                        if pdf_response.headers.get('content-type', '').lower().startswith('application/pdf'):
+                            pdf_file = BytesIO(pdf_response.content)
+                            reader = PdfReader(pdf_file)
+                            
+                            text = ""
+                            max_pages = min(50, len(reader.pages))
+                            for i in range(max_pages):
+                                text += reader.pages[i].extract_text()
+                            
+                            if len(text.strip()) > 100:
+                                return text[:15000], None
+                
+                # If no PDF found on agenda page, try to extract HTML content
+                main_content = agenda_soup.find('div', class_='main-content') or agenda_soup.find('main')
+                if main_content:
+                    text = main_content.get_text(separator='\n', strip=True)
+                    if len(text) > 100:
+                        return text[:15000], None
         
-        return None, "No School Board meeting with agenda found"
+        return None, "No School Board agenda with downloadable content found"
     except Exception as e:
         error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
         return None, error_details
