@@ -113,7 +113,6 @@ def search_sports_news(debug=False):
     """
     AI-FIRST APPROACH (UNFILTERED):
     Grab EVERY piece of text from the page. Do not filter lines.
-    This ensures times like '6:00' (without PM) are not deleted.
     """
     try:
         events_url = "https://www.maxpreps.com/tx/sachse/sachse-mustangs/events/"
@@ -155,26 +154,18 @@ def summarize_with_llm(client, content, section_type):
         Content: {content}"""
 
     elif section_type == "sports":
-        # UPDATED PROMPT: AGGRESSIVE TIME FINDING
-        prompt = f"""You are a Sports Editor. I am providing you with RAW text from a schedule website.
-
-        **Your Goal:** Extract the upcoming game schedule into a clean Markdown table.
-
-        **CRITICAL RULES:**
-        1. **Find the Time:** The time might be listed simply as "6:00" or "7:30" without "pm". It might be inside a "Preview" line. LOOK HARD FOR NUMBERS formatted like times.
-        2. **Infer Opponents:** If you see "vs" or "@" followed by a name, that is the opponent.
-        3. **Future Only:** Ignore past games with scores. Only list upcoming dates.
+        # --- SIMPLIFIED NATURAL LANGUAGE PROMPT ---
+        prompt = f"""You are a helpful assistant for the Sachse TLDR newsletter.
         
-        **Output Format:**
+        Please look at the raw text below from the MaxPreps events page.
         
-        **Mustang Sports Minute**
-        [Write 2 sentences about the team's momentum]
-
-        **This Week's Schedule**
+        **Task:**
+        Create a clean Markdown table that shows the Sport, Date, Time, and Opponent Team for all **UPCOMING** games that Sachse will be playing.
         
-        | Date | Sport | Opponent | Time |
-        |---|---|---|---|
-        | [Date] | [Sport] | [Opponent] | [Time] |
+        **Important:**
+        * Do not include games that have already happened (ignore lines with final scores).
+        * If the text is messy, do your best to infer the correct time and opponent.
+        * Add a brief 2-sentence intro about the team's season before the table.
 
         **Raw Text:**
         {content}"""
