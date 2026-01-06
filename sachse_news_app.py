@@ -159,9 +159,39 @@ def scrape_school_board_agenda(debug=False):
 def search_sports_news(debug=False):
     """Search for Sachse High School Mustangs sports news via MaxPreps."""
     try:
-        # Use the events page for better formatted data
+        # Fetch both pages: main page for scores, events page for schedule
+        main_url = "https://www.maxpreps.com/tx/sachse/sachse-mustangs/"
         events_url = "https://www.maxpreps.com/tx/sachse/sachse-mustangs/events/"
         
+        combined_text = "SACHSE MUSTANGS SPORTS UPDATE\n\n"
+        
+        # Get recent scores from main page
+        try:
+            response = requests.get(main_url, timeout=30, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            })
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            page_text = soup.get_text()
+            # Extract team records if visible (e.g., "13-8", "10-10")
+            if "Basketball" in page_text or "Soccer" in page_text:
+                combined_text += "RECENT TEAM RECORDS:\n"
+                lines = page_text.split('\n')
+                for i, line in enumerate(lines):
+                    if 'V. Girls Basketball' in line or 'V. Boys Basketball' in line or 'V. Girls Soccer' in line or 'V. Boys Soccer' in line:
+                        # Look for scores in nearby lines
+                        for j in range(i, min(i + 5, len(lines))):
+                            if '-' in lines[j] and lines[j].count('-') == 1:
+                                parts = lines[j].strip().split('-')
+                                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                                    combined_text += f"{line.strip()}: {lines[j].strip()}\n"
+                                    break
+                combined_text += "\n"
+        except:
+            pass
+        
+        # Get upcoming games from events page
         response = requests.get(events_url, timeout=30, headers={
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
@@ -170,71 +200,80 @@ def search_sports_news(debug=False):
         soup = BeautifulSoup(response.content, 'html.parser')
         
         if debug:
-            debug_info = f"MaxPreps Events URL: {events_url}\n\n"
+            debug_info = f"Events URL: {events_url}\n\n"
             debug_info += f"Response Status: {response.status_code}\n\n"
-            debug_info += f"Page title: {soup.find('title').get_text() if soup.find('title') else 'N/A'}\n\n"
-            
-            page_text = soup.get_text()
-            if "All Sachse Events" in page_text:
-                debug_info += "Found 'All Sachse Events' section\n"
-            
             return None, debug_info[:2000]
         
-        # Parse the structured events table
-        page_text = soup.get_text(separator='|')
-        lines = [line.strip() for line in page_text.split('|') if line.strip()]
+        combined_text += "UPCOMING GAMES:\n"
         
-        combined_text = "SACHSE MUSTANGS - UPCOMING GAMES\n\n"
+        # Parse the text more carefully to extract complete game info
+        page_text = soup.get_text(separator='\n')
+        lines = [line.strip() for line in page_text.split('\n') if line.strip()]
         
-        # Find events in the structured format
         events_found = 0
         i = 0
-        while i < len(lines) and events_found < 15:
+        while i < len(lines) and events_found < 20:
             line = lines[i]
             
             # Look for date patterns (1/6, 1/8, etc.)
-            if '/' in line and len(line) < 6 and line[0].isdigit():
+            if len(line) < 10 and '/' in line and line[0].isdigit():
                 date = line
+                sport = ""
+                opponent = ""
+                time = ""
+                location = ""
                 
-                # Next should be sport type
-                if i + 1 < len(lines):
-                    sport = lines[i + 1]
+                # Look ahead for sport, opponent, time
+                for j in range(i + 1, min(i + 10, len(lines))):
+                    next_line = lines[j].strip()
                     
-                    # Skip if not a valid sport line
-                    if any(x in sport for x in ['Basketball', 'Soccer', 'V.', 'JV.', 'F.', 'Boys', 'Girls']):
-                        # Look for opponent
-                        opponent = ""
-                        time = ""
-                        location = ""
-                        
-                        for j in range(i + 2, min(i + 8, len(lines))):
-                            if '@' in lines[j] or 'vs' in lines[j]:
-                                opponent = lines[j]
-                            elif 'pm' in lines[j].lower() or 'am' in lines[j].lower():
-                                time = lines[j]
-                                break
-                        
-                        if opponent or time:
-                            game_info = f"{date} - {sport}"
-                            if opponent:
-                                game_info += f" {opponent}"
-                            if time:
-                                game_info += f" at {time}"
-                            
-                            combined_text += game_info + "\n"
-                            events_found += 1
+                    # Skip empty or very short lines
+                    if len(next_line) < 2:
+                        continue
+                    
+                    # Detect sport
+                    if not sport and any(x in next_line for x in ['Basketball', 'Soccer', 'Football', 'Baseball', 'Volleyball']):
+                        if any(x in next_line for x in ['V.', 'JV.', 'F.', 'Varsity', 'Boys', 'Girls']):
+                            sport = next_line
+                            continue
+                    
+                    # Detect opponent (vs or @)
+                    if sport and not opponent:
+                        if next_line.startswith('vs') or next_line.startswith('@'):
+                            opponent = next_line
+                            continue
+                        # Sometimes opponent name comes right after vs/@ symbol
+                        elif 'vs' in lines[j-1] or '@' in lines[j-1]:
+                            if len(next_line) > 3 and not any(x in next_line.lower() for x in ['preview', 'watch', 'game', 'match', 'ticket']):
+                                opponent = next_line
+                                continue
+                    
+                    # Detect time
+                    if ('pm' in next_line.lower() or 'am' in next_line.lower()) and ':' in next_line:
+                        time = next_line
+                        break
+                
+                # Format and add if we have enough info
+                if sport:
+                    game_info = f"{date} - {sport}"
+                    if opponent:
+                        game_info += f" {opponent}"
+                    if time:
+                        game_info += f" - {time}"
+                    
+                    combined_text += game_info + "\n"
+                    events_found += 1
             
             i += 1
         
-        if len(combined_text) > 200:
+        if len(combined_text) > 300:
             return combined_text[:8000], None
         
-        # Fallback: return generic message with link
-        return None, "Unable to parse game schedule automatically. View full schedule at: https://www.maxpreps.com/tx/sachse/sachse-mustangs/events/"
+        return None, "Unable to parse full game information. View at: https://www.maxpreps.com/tx/sachse/sachse-mustangs/events/"
         
     except Exception as e:
         error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        error_details += "\n\nView full schedule at: https://www.maxpreps.com/tx/sachse/sachse-mustangs/events/"
+        error_details += "\n\nView schedule at: https://www.maxpreps.com/tx/sachse/sachse-mustangs/events/"
         return None, error_details
 
 
@@ -269,19 +308,24 @@ Content:
         
         "sports": """You are a high school sports reporter. Write a "Mustang Sports Minute" based on the following game information about Sachse High School athletics.
 
-Create a well-organized summary with bullet points:
+Structure your report in two sections:
+
+**Recent Results & Team Updates**
+Write a brief narrative paragraph (2-4 sentences) covering:
+- Overall team performance and momentum
+- Recent game scores and notable results
+- Team records when available
+- Any standout performances mentioned
 
 **This Week's Schedule**
-Format each game as: "- **Date**: Sport (Level) vs/@ Opponent - Time"
-Examples:
+List upcoming games with bullet points in this format:
+- **Date**: Sport vs/@ Opponent - Time
+
+Example format:
 - **1/6**: Girls V. Basketball vs Naaman Forest - 6:00 PM
 - **1/8**: Boys V. Soccer @ Independence - 6:30 PM
 
-Include game location indicators:
-- "vs" = home game
-- "@" = away game
-
-Keep it energetic and informative. Focus on upcoming games (150-250 words total).
+Keep the total length to 200-300 words. Write in an energetic, positive style that builds excitement.
 
 Content:
 {content}"""
