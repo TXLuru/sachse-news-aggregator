@@ -158,10 +158,24 @@ def scrape_school_board_agenda(debug=False):
 
 def search_sports_news(debug=False):
     """Search for Sachse High School Mustangs sports news."""
+    import time
+    
     try:
         ddgs = DDGS()
         query = "Sachse High School Mustangs sports results last week"
-        results = ddgs.text(query, max_results=10)
+        
+        # Try with retries for rate limiting
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                results = ddgs.text(query, max_results=10)
+                break
+            except Exception as e:
+                if "Ratelimit" in str(e) and attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+                    continue
+                else:
+                    raise
         
         if debug:
             debug_info = f"Query: {query}\n\n"
@@ -186,6 +200,11 @@ def search_sports_news(debug=False):
         return combined_text[:8000], None
     except Exception as e:
         error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+        
+        # If rate limited, provide helpful message
+        if "Ratelimit" in str(e):
+            error_details += "\n\nDuckDuckGo is rate limiting requests. Wait a few minutes and try again, or search manually at: https://www.maxpreps.com/tx/sachse/sachse-mustangs/"
+        
         return None, error_details
 
 
@@ -362,8 +381,8 @@ def main():
                         newsletter_sections.append("*Debug mode enabled - see details below*\n")
                         status.update(label="City Council: Debug Info Ready", state="complete")
                     else:
-                        newsletter_sections.append("*City Council data not available. Upload PDF manually.*\n")
-                        status.update(label="City Council: Manual action needed", state="error")
+                        newsletter_sections.append("*No agenda PDFs found on the main website. Please upload a PDF manually from [CivicClerk](https://sachsetx.portal.civicclerk.com/)*\n")
+                        status.update(label="City Council: Manual upload needed", state="error")
             
             if council_error:
                 with st.expander("View City Council Debug/Error Details"):
