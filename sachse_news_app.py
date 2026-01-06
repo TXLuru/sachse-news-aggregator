@@ -113,6 +113,7 @@ def search_sports_news(debug=False):
     """
     AI-FIRST APPROACH (UNFILTERED):
     Grab EVERY piece of text from the page. Do not filter lines.
+    This ensures we keep asterisks (*), 'Tournament' labels, and all times.
     """
     try:
         events_url = "https://www.maxpreps.com/tx/sachse/sachse-mustangs/events/"
@@ -124,7 +125,6 @@ def search_sports_news(debug=False):
         soup = BeautifulSoup(response.content, 'html.parser')
         
         # Grab strictly text, separating by newline
-        # Use a distinctive separator so the AI knows where lines break
         full_text = soup.get_text(separator='\n')
         
         # Clean up excessive whitespace but KEEP ALL CONTENT
@@ -141,7 +141,7 @@ def search_sports_news(debug=False):
 
 
 def summarize_with_llm(client, content, section_type):
-    """Use OpenAI to summarize content."""
+    """Use OpenAI to summarize content based on section type."""
     
     if section_type == "city_council":
         prompt = f"""You are a local news reporter. Summarize this City Council agenda.
@@ -154,17 +154,32 @@ def summarize_with_llm(client, content, section_type):
         Content: {content}"""
 
     elif section_type == "sports":
-        # --- SIMPLIFIED NATURAL LANGUAGE PROMPT ---
+        # --- PROMPT UPDATED TO PRESERVE TEAM LEVEL ---
         prompt = f"""You are a helpful assistant for the Sachse TLDR newsletter.
         
         Please look at the raw text below from the MaxPreps events page.
         
         **Task:**
-        Create a clean Markdown table that shows the Sport, Date, Time, and Opponent Team for all **UPCOMING** games that Sachse will be playing.
+        Create a clean Markdown table showing the upcoming schedule for Sachse High School.
+        
+        **Formatting Rules:**
+        1. **Date:** Format as "Day, Month Date" (e.g., "Tue, Jan 6"). Infer the day of the week.
+        2. **Sport:** IMPORTANT! Keep the Team Level. 
+           - Examples: "Boys Varsity Basketball", "Girls JV Soccer", "Freshman Football".
+           - Do NOT remove "Varsity", "JV", or "Freshman".
+        3. **Time:** Format as "6:00 PM".
+        4. **Opponent:** Add "(Tournament)" if the text implies it.
+        5. **Location:** Column must be "Home" or "Away". 
+           - If text says "vs", Location is **Home**.
+           - If text says "@", Location is **Away**.
+
+        **Output Columns (Strictly Follow This Order):**
+        | Date | Sport | Time | Opponent | Location |
+        |---|---|---|---|---|
         
         **Important:**
         * Do not include games that have already happened (ignore lines with final scores).
-        * If the text is messy, do your best to infer the correct time and opponent.
+        * If the text is messy, infer the correct time and opponent.
         * Add a brief 2-sentence intro about the team's season before the table.
 
         **Raw Text:**
