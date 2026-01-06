@@ -8,8 +8,96 @@ from openai import OpenAI
 import traceback
 from datetime import datetime
 
+# Check if Selenium is available
+try:
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
+    from webdriver_manager.chrome import ChromeDriverManager
+    SELENIUM_AVAILABLE = True
+except ImportError:
+    SELENIUM_AVAILABLE = False
 
-def scrape_city_council_agenda(debug=False):
+
+def scrape_city_council_agenda_selenium():
+    """Scrape City Council agenda using Selenium (JavaScript rendering)."""
+    if not SELENIUM_AVAILABLE:
+        return None, "Selenium not installed. Install with: pip install selenium webdriver-manager"
+    
+    try:
+        # Setup headless Chrome
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        
+        try:
+            # Navigate to CivicClerk portal
+            url = "https://sachsetx.portal.civicclerk.com/"
+            driver.get(url)
+            
+            # Wait for content to load
+            wait = WebDriverWait(driver, 10)
+            wait.until(EC.presence_of_element_located((By.TAG_NAME, "a")))
+            
+            # Find the first City Council meeting link
+            links = driver.find_elements(By.TAG_NAME, "a")
+            
+            for link in links:
+                link_text = link.text.lower()
+                href = link.get_attribute("href") or ""
+                
+                if "city council" in link_text and "event" in href:
+                    # Click the meeting link
+                    meeting_url = href
+                    driver.get(meeting_url)
+                    
+                    # Wait for page to load
+                    wait.until(EC.presence_of_element_located((By.TAG_NAME, "a")))
+                    
+                    # Find PDF download links
+                    pdf_links = driver.find_elements(By.TAG_NAME, "a")
+                    
+                    for pdf_link in pdf_links:
+                        pdf_href = pdf_link.get_attribute("href") or ""
+                        pdf_text = pdf_link.text.lower()
+                        
+                        if ".pdf" in pdf_href and ("agenda" in pdf_text or "packet" in pdf_text):
+                            # Download the PDF
+                            pdf_response = requests.get(pdf_href, timeout=60)
+                            pdf_response.raise_for_status()
+                            
+                            pdf_file = BytesIO(pdf_response.content)
+                            reader = PdfReader(pdf_file)
+                            
+                            text = ""
+                            max_pages = min(50, len(reader.pages))
+                            for i in range(max_pages):
+                                text += reader.pages[i].extract_text()
+                            
+                            if len(text.strip()) > 100:
+                                return text[:15000], None
+                    
+                    break
+            
+            return None, "No City Council agenda PDF found"
+            
+        finally:
+            driver.quit()
+            
+    except Exception as e:
+        error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+        return None, error_details
+
+
+def scrape_city_council_agenda(debug=False, use_selenium=False):
     """Scrape the latest City Council meeting agenda packet."""
     try:
         # Try the main Sachse website agendas page first
@@ -281,6 +369,28 @@ def main():
     st.sidebar.subheader("Select News Sources")
     
     run_city_council = st.sidebar.checkbox("City Council Updates", value=True)
+    
+    # Options for City Council scraping
+    use_selenium = False
+    uploaded_council_pdf = None
+    if run_city_council:
+        st.sidebar.markdown("**City Council Options:**")
+        if SELENIUM_AVAILABLE:
+            use_selenium = st.sidebar.checkbox(
+                "Use Selenium (full automation)",
+                value=True,
+                help="Uses browser automation to handle JavaScript"
+            )
+        else:
+            st.sidebar.info("Install Selenium for full automation: pip install selenium webdriver-manager")
+        
+        if not use_selenium:
+            uploaded_council_pdf = st.sidebar.file_uploader(
+                "Or upload Council PDF manually",
+                type=['pdf'],
+                help="Download from https://sachsetx.portal.civicclerk.com/"
+            )
+    
     run_school_board = st.sidebar.checkbox("School Board Updates", value=True)
     run_sports = st.sidebar.checkbox("Mustang Sports Minute", value=True)
     
@@ -310,9 +420,36 @@ def main():
         
         # Agent 1: City Council
         if run_city_council:
-            with st.status("Scraping City Council agenda...", expanded=True) as status:
-                st.write("Fetching latest meeting documents...")
-                council_text, error = scrape_city_council_agenda(debug=debug_mode)
+            with st.status("Processing City Council agenda...", expanded=True) as status:
+                council_text = None
+                error = None
+                
+                # Priority 1: Use Selenium if enabled
+                if use_selenium and SELENIUM_AVAILABLE:
+                    st.write("Using Selenium to render JavaScript...")
+                    council_text, error = scrape_city_council_agenda_selenium()
+                
+                # Priority 2: Check if user uploaded a PDF
+                elif uploaded_council_pdf:
+                    st.write("Processing uploaded PDF...")
+                    try:
+                        pdf_file = BytesIO(uploaded_council_pdf.read())
+                        reader = PdfReader(pdf_file)
+                        
+                        text = ""
+                        max_pages = min(50, len(reader.pages))
+                        for i in range(max_pages):
+                            text += reader.pages[i].extract_text()
+                        
+                        if len(text.strip()) > 100:
+                            council_text = text[:15000]
+                    except Exception as e:
+                        error = f"Error processing uploaded PDF: {str(e)}"
+                
+                # Priority 3: Try basic scraping (will likely fail)
+                else:
+                    st.write("Attempting basic scraping...")
+                    council_text, error = scrape_city_council_agenda(debug=debug_mode, use_selenium=False)
                 
                 if council_text:
                     st.write("Generating summary with AI...")
@@ -333,12 +470,13 @@ def main():
                         status.update(label="City Council: Debug Info Ready", state="complete")
                     else:
                         newsletter_sections.append("## City Hall Updates\n")
-                        newsletter_sections.append("*Could not retrieve City Council data. Please check back later.*\n")
-                        status.update(label="City Council: Data retrieval failed", state="error")
+                        newsletter_sections.append("*City Council data not available. Enable Selenium or upload PDF manually.*\n")
+                        status.update(label="City Council: Manual action needed", state="error")
                     
                     # Show error/debug details in expander
-                    with st.expander("View Debug/Error Details"):
-                        st.code(error, language="text")
+                    if error:
+                        with st.expander("View Debug/Error Details"):
+                            st.code(error, language="text")
         
         # Agent 2: School Board
         if run_school_board:
