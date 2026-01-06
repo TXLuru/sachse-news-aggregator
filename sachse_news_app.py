@@ -228,7 +228,7 @@ Content:
 
 Your Task:
 1. Scan the text to find the **Upcoming Schedule**.
-2. IGNORE past scores (games with results like 13-4). Look for future dates.
+2. IGNORE past scores (games with numeric results like 13-4). Look for future dates.
 3. Extract the Date, Sport, Opponent, and Time.
 4. If the opponent name is on a different line or hard to find, infer it from the context (e.g. if it says "vs" and the next line is "Rowlett", the opponent is Rowlett).
 
@@ -238,9 +238,12 @@ Your Task:
 [Write 2 sentences about the team's season so far based on any records found in the text]
 
 **This Week's Schedule**
-* **Date**: Sport vs/@ Opponent - Time
+Create a Markdown table with the following columns:
+| Date | Sport | Opponent | Time |
+|---|---|---|---|
+| [Date] | [Sport] | [Opponent] | [Time] |
 
-(Example: **1/9**: Boys Varsity Soccer vs Rowlett - 6:30 PM)
+(If a detail is missing, write "TBD")
 
 Raw Text:
 {content}"""
