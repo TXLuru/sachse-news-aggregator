@@ -7,9 +7,9 @@ from duckduckgo_search import DDGS
 from openai import OpenAI
 import traceback
 from datetime import datetime
-import re
+import re  # Required for the new sports logic
 
-# Check if Selenium is available
+# Check if Selenium is available (Optional for advanced users)
 try:
     from selenium import webdriver
     from selenium.webdriver.common.by import By
@@ -187,7 +187,7 @@ def search_sports_news(debug=False):
         except:
             pass
             
-        # --- PART 2: GET UPCOMING GAMES ---
+        # --- PART 2: GET UPCOMING GAMES (State-Based) ---
         response = requests.get(events_url, timeout=30, headers={
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
@@ -196,82 +196,86 @@ def search_sports_news(debug=False):
         
         combined_text += "UPCOMING GAMES:\n"
         
+        # Clean lines
         page_text = soup.get_text(separator='\n')
         lines = [line.strip() for line in page_text.split('\n') if line.strip()]
         
-        # Improved Regex for "1/9", "6:00pm", "6:00 PM"
+        # Regex setup
         date_pattern = re.compile(r'^(\d{1,2}/\d{1,2})')
-        time_pattern = re.compile(r'(\d{1,2}:\d{2})\s*([aApP][mM])?') # Matches 6:00pm, 6:00 PM, 6:00
+        time_pattern = re.compile(r'(\d{1,2}:\d{2})\s*([aApP][mM])?') 
+        
+        current_date = None
+        seen_games = set() # Prevent duplicates
         
         i = 0
         while i < len(lines):
             line = lines[i]
             
-            # Check for date at start of line
+            # 1. UPDATE DATE STATE if line starts with date
             date_match = date_pattern.search(line)
-            
             if date_match:
-                date = date_match.group(1)
+                current_date = date_match.group(1)
+            
+            # 2. CHECK FOR GAME (Trigger on Sport Name)
+            # We only proceed if we have a date and the line looks like a sport
+            if current_date:
+                # Remove date from line if it's merged (e.g. "1/6Boys") to check content
+                clean_line = line.replace(current_date, "").strip()
                 
-                # If date and sport are merged (e.g. "1/9Boys"), separate them
-                remaining_line_content = line[len(date):].strip()
+                # Broad Sport Keyword Check
+                is_sport_line = any(s in clean_line for s in ['Basketball', 'Soccer', 'Football', 'Baseball', 'Volleyball', 'Softball'])
+                is_team_line = any(t in clean_line for t in ['V.', 'JV.', 'F.', 'Varsity', 'Boys', 'Girls', 'Fr', 'Freshman'])
                 
-                sport = ""
-                opponent = ""
-                time = ""
-                
-                # Scan a block of lines to find the details for this game
-                search_block = [remaining_line_content] + lines[i+1:i+10]
-                
-                for scan_line in search_block:
-                    clean_scan = scan_line.replace('*', '').strip()
+                # If it looks like a game line OR we are scanning a header block
+                if is_sport_line and is_team_line:
                     
-                    # Skip generic junk, but look for time hidden inside it first
-                    if not clean_scan or any(x in clean_scan.lower() for x in ['preview', 'watch', 'ticket', 'game', 'match']):
-                        if not time:
-                            time_match = time_pattern.search(scan_line)
-                            if time_match:
-                                time = time_match.group(0) # Capture the whole match including AM/PM
-                        continue
+                    sport = clean_line
+                    opponent = ""
+                    time = ""
                     
-                    # Detect Sport
-                    if not sport and any(x in clean_scan for x in ['Basketball', 'Soccer', 'Football', 'Baseball', 'Volleyball']):
-                        if any(x in clean_scan for x in ['V.', 'JV.', 'F.', 'Varsity', 'Boys', 'Girls']):
-                            sport = clean_scan
-                            continue
-                            
-                    # Detect Time (Regex Priority)
-                    if not time:
-                        time_match = time_pattern.search(scan_line)
-                        if time_match:
-                            time = time_match.group(0)
-                            if len(clean_scan) < 10: # If line was JUST time
-                                continue
+                    # SCAN NEIGHBORHOOD (Look at current line + next 3 lines for details)
+                    context_block = lines[i:i+4] 
                     
-                    # Detect Opponent
-                    if sport and not opponent:
-                        lower = clean_scan.lower()
-                        if lower.startswith('vs') or lower.startswith('@'):
-                            opponent = clean_scan
-                        elif 'prev_line_clean' in locals() and prev_line_clean in ['vs', '@', 'vs.', 'at']:
-                            opponent = clean_scan
-                            
-                    prev_line_clean = lower if 'lower' in locals() else ""
-
-                if sport:
-                    entry = f"{date}: {sport}"
-                    if opponent:
-                        entry += f" {opponent}"
-                    if time:
-                        entry += f" - {time}"
-                    else:
-                        entry += " - Time TBD"
+                    for scan_line in context_block:
+                        s_clean = scan_line.replace('*', '').strip()
+                        if not s_clean: continue
                         
-                    combined_text += entry + "\n"
-                    
+                        # Find Time
+                        if not time:
+                            t_match = time_pattern.search(s_clean)
+                            if t_match:
+                                time = t_match.group(0)
+                        
+                        # Find Opponent
+                        # Logic: Look for "vs", "@", or common opponent names if "vs" was on prev line
+                        lower = s_clean.lower()
+                        if not opponent:
+                            if lower.startswith('vs') or lower.startswith('@'):
+                                opponent = s_clean
+                            # If the line is NOT a sport, NOT a time, NOT a date, it might be the opponent name
+                            elif s_clean != sport and s_clean != time and current_date not in s_clean:
+                                if len(s_clean) > 3 and not any(x in lower for x in ['preview', 'watch', 'ticket', 'game']):
+                                    # Heuristic: Opponents usually start with capital letters
+                                    if s_clean[0].isupper(): 
+                                        opponent = s_clean
+
+                    # Construct Entry
+                    game_sig = f"{current_date}-{sport}" # Signature to prevent dupes
+                    if game_sig not in seen_games:
+                        entry = f"{current_date}: {sport}"
+                        if opponent:
+                            entry += f" {opponent}"
+                        if time:
+                            entry += f" - {time}"
+                        else:
+                            entry += " - Time TBD"
+                            
+                        combined_text += entry + "\n"
+                        seen_games.add(game_sig)
+            
             i += 1
             
-        return combined_text[:8000], None
+        return combined_text[:12000], None # Increased buffer size
         
     except Exception as e:
         error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
