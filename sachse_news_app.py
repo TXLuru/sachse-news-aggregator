@@ -7,9 +7,9 @@ from duckduckgo_search import DDGS
 from openai import OpenAI
 import traceback
 from datetime import datetime
-import re  # Added for Pattern Matching
+import re
 
-# Check if Selenium is available (Optional for advanced users)
+# Check if Selenium is available
 try:
     from selenium import webdriver
     from selenium.webdriver.common.by import By
@@ -199,8 +199,9 @@ def search_sports_news(debug=False):
         page_text = soup.get_text(separator='\n')
         lines = [line.strip() for line in page_text.split('\n') if line.strip()]
         
+        # Improved Regex for "1/9", "6:00pm", "6:00 PM"
         date_pattern = re.compile(r'^(\d{1,2}/\d{1,2})')
-        time_pattern = re.compile(r'(\d{1,2}:\d{2}\s*[aApP][mM])')
+        time_pattern = re.compile(r'(\d{1,2}:\d{2})\s*([aApP][mM])?') # Matches 6:00pm, 6:00 PM, 6:00
         
         i = 0
         while i < len(lines):
@@ -230,7 +231,7 @@ def search_sports_news(debug=False):
                         if not time:
                             time_match = time_pattern.search(scan_line)
                             if time_match:
-                                time = time_match.group(1)
+                                time = time_match.group(0) # Capture the whole match including AM/PM
                         continue
                     
                     # Detect Sport
@@ -243,7 +244,7 @@ def search_sports_news(debug=False):
                     if not time:
                         time_match = time_pattern.search(scan_line)
                         if time_match:
-                            time = time_match.group(1)
+                            time = time_match.group(0)
                             if len(clean_scan) < 10: # If line was JUST time
                                 continue
                     
@@ -306,26 +307,17 @@ Write in a clear, conversational style. Keep it concise (200-300 words). Use bul
 Content:
 {content}""",
         
-        "sports": """You are a high school sports reporter. Write a "Mustang Sports Minute" based on the following game information about Sachse High School athletics.
+        "sports": """You are a high school sports reporter. Write a "Mustang Sports Minute" based on the following game information.
 
 Structure your report in two sections:
 
-**Recent Results & Team Updates**
-Write a brief narrative paragraph (2-4 sentences) covering:
-- Overall team performance and momentum
-- Recent game scores and notable results
-- Team records when available
-- Any standout performances mentioned
+**1. Recent Results & Team Updates**
+Write a brief, high-energy paragraph (2-4 sentences) about recent wins, scores, and team records.
 
-**This Week's Schedule**
-List upcoming games with bullet points in this format:
+**2. The Full Schedule**
+List EVERY upcoming game found in the content. Do not summarize or truncate this list.
+Format as:
 - **Date**: Sport vs/@ Opponent - Time
-
-Example format:
-- **1/6**: Girls V. Basketball vs Naaman Forest - 6:00 PM
-- **1/8**: Boys V. Soccer @ Independence - 6:30 PM
-
-Keep the total length to 200-300 words. Write in an energetic, positive style that builds excitement.
 
 Content:
 {content}"""
@@ -341,7 +333,7 @@ Content:
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
-            max_tokens=500
+            max_tokens=1000  # Increased token limit to ensure full schedule fits
         )
         
         return response.choices[0].message.content
