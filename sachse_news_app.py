@@ -187,7 +187,7 @@ def search_sports_news(debug=False):
         except:
             pass
             
-        # --- PART 2: GET UPCOMING GAMES (State-Based) ---
+        # --- PART 2: GET UPCOMING GAMES ---
         response = requests.get(events_url, timeout=30, headers={
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
@@ -205,62 +205,82 @@ def search_sports_news(debug=False):
         time_pattern = re.compile(r'(\d{1,2}:\d{2})\s*([aApP][mM])?') 
         
         current_date = None
-        seen_games = set() # Prevent duplicates
+        seen_games = set() 
         
         i = 0
         while i < len(lines):
             line = lines[i]
             
-            # 1. UPDATE DATE STATE if line starts with date
+            # 1. UPDATE DATE STATE
             date_match = date_pattern.search(line)
             if date_match:
                 current_date = date_match.group(1)
             
-            # 2. CHECK FOR GAME (Trigger on Sport Name)
-            # We only proceed if we have a date and the line looks like a sport
+            # 2. CHECK FOR GAME
             if current_date:
-                # Remove date from line if it's merged (e.g. "1/6Boys") to check content
                 clean_line = line.replace(current_date, "").strip()
                 
                 # Broad Sport Keyword Check
                 is_sport_line = any(s in clean_line for s in ['Basketball', 'Soccer', 'Football', 'Baseball', 'Volleyball', 'Softball'])
                 is_team_line = any(t in clean_line for t in ['V.', 'JV.', 'F.', 'Varsity', 'Boys', 'Girls', 'Fr', 'Freshman'])
                 
-                # If it looks like a game line OR we are scanning a header block
                 if is_sport_line and is_team_line:
-                    
                     sport = clean_line
                     opponent = ""
                     time = ""
                     
-                    # SCAN NEIGHBORHOOD (Look at current line + next 3 lines for details)
-                    context_block = lines[i:i+4] 
+                    # SCAN THE NEXT 4 LINES FOR DETAILS
+                    context_block = lines[i+1:i+6] # Look ahead 5 lines
                     
-                    for scan_line in context_block:
+                    for j, scan_line in enumerate(context_block):
                         s_clean = scan_line.replace('*', '').strip()
-                        if not s_clean: continue
+                        s_lower = s_clean.lower()
                         
-                        # Find Time
+                        if not s_clean: continue
+
+                        # IGNORE JUNK (unless it contains time)
+                        if any(x in s_lower for x in ['preview', 'watch', 'ticket', 'game', 'box score']):
+                            # Check if time is hidden in junk line like "6:00pm Preview"
+                            if not time:
+                                t_match = time_pattern.search(s_clean)
+                                if t_match: time = t_match.group(0)
+                            continue
+                        
+                        # FIND TIME
                         if not time:
                             t_match = time_pattern.search(s_clean)
                             if t_match:
                                 time = t_match.group(0)
-                        
-                        # Find Opponent
-                        # Logic: Look for "vs", "@", or common opponent names if "vs" was on prev line
-                        lower = s_clean.lower()
-                        if not opponent:
-                            if lower.startswith('vs') or lower.startswith('@'):
-                                opponent = s_clean
-                            # If the line is NOT a sport, NOT a time, NOT a date, it might be the opponent name
-                            elif s_clean != sport and s_clean != time and current_date not in s_clean:
-                                if len(s_clean) > 3 and not any(x in lower for x in ['preview', 'watch', 'ticket', 'game']):
-                                    # Heuristic: Opponents usually start with capital letters
-                                    if s_clean[0].isupper(): 
-                                        opponent = s_clean
+                                # If the line was just time, don't treat it as opponent
+                                if len(s_clean) < 9: continue
 
-                    # Construct Entry
-                    game_sig = f"{current_date}-{sport}" # Signature to prevent dupes
+                        # FIND OPPONENT
+                        if not opponent:
+                            # CASE A: Line starts with 'vs' or '@' (e.g. "@ Flower Mound")
+                            if s_lower.startswith('vs') or s_lower.startswith('@'):
+                                opponent = s_clean
+                            
+                            # CASE B: Previous line was ONLY 'vs'/'@', so this line is the name
+                            elif j > 0:
+                                prev_clean = context_block[j-1].replace('*', '').strip().lower()
+                                if prev_clean in ['vs', '@', 'vs.', 'at']:
+                                    opponent = f"{prev_clean} {s_clean}"
+                            
+                            # CASE C: Implicit Opponent (No 'vs' found, but it's a Capitalized Name)
+                            # Only if we haven't found time yet (Time usually comes after opponent)
+                            elif not time and s_clean[0].isupper() and len(s_clean) > 3:
+                                # Verify it's not a sport name
+                                if not any(x in s_clean for x in ['Basketball', 'Soccer']):
+                                    opponent = s_clean
+
+                    # Formatting Fixes
+                    if opponent.lower().startswith('vs') or opponent.lower().startswith('@'):
+                        pass # It's already good
+                    elif opponent: 
+                        opponent = f"vs {opponent}" # Add default "vs" if missing
+
+                    # Save Entry
+                    game_sig = f"{current_date}-{sport}"
                     if game_sig not in seen_games:
                         entry = f"{current_date}: {sport}"
                         if opponent:
@@ -275,12 +295,11 @@ def search_sports_news(debug=False):
             
             i += 1
             
-        return combined_text[:12000], None # Increased buffer size
+        return combined_text[:12000], None 
         
     except Exception as e:
         error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
         return None, error_details
-
 
 def summarize_with_llm(client, content, section_type):
     """Use OpenAI to summarize content based on section type."""
