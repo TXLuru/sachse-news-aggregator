@@ -278,7 +278,7 @@ Focus on:
 - Standout performances (if mentioned)
 - Upcoming important games this week
 - Overall team records and momentum
-- Use bullet points to list recent game outcomes with scores
+- Use bullet points to list recent game dates and outcomes with scores
 
 Organize into two sections:
 1. **Recent Results** - Summarize recent game outcomes
