@@ -7,8 +7,9 @@ from duckduckgo_search import DDGS
 from openai import OpenAI
 import traceback
 from datetime import datetime
+import re  # Added for Pattern Matching
 
-# Check if Selenium is available
+# Check if Selenium is available (Optional for advanced users)
 try:
     from selenium import webdriver
     from selenium.webdriver.common.by import By
@@ -159,123 +160,120 @@ def scrape_school_board_agenda(debug=False):
 def search_sports_news(debug=False):
     """Search for Sachse High School Mustangs sports news via MaxPreps."""
     try:
-        # Fetch both pages: main page for scores, events page for schedule
         main_url = "https://www.maxpreps.com/tx/sachse/sachse-mustangs/"
         events_url = "https://www.maxpreps.com/tx/sachse/sachse-mustangs/events/"
         
         combined_text = "SACHSE MUSTANGS SPORTS UPDATE\n\n"
         
-        # Get recent scores from main page
+        # --- PART 1: GET RECENT SCORES ---
         try:
             response = requests.get(main_url, timeout=30, headers={
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             })
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
-            
             page_text = soup.get_text()
+            
             if "Basketball" in page_text or "Soccer" in page_text:
                 combined_text += "RECENT TEAM RECORDS:\n"
                 lines = page_text.split('\n')
                 for i, line in enumerate(lines):
-                    if 'V. Girls Basketball' in line or 'V. Boys Basketball' in line or 'V. Girls Soccer' in line or 'V. Boys Soccer' in line:
+                    if any(x in line for x in ['V. Girls', 'V. Boys', 'Varsity']):
                         for j in range(i, min(i + 5, len(lines))):
-                            if '-' in lines[j] and lines[j].count('-') == 1:
-                                parts = lines[j].strip().split('-')
-                                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                                    combined_text += f"{line.strip()}: {lines[j].strip()}\n"
-                                    break
+                            if re.search(r'\d+-\d+', lines[j]):
+                                combined_text += f"{line.strip()}: {lines[j].strip()}\n"
+                                break
                 combined_text += "\n"
         except:
             pass
             
-        # Get upcoming games from events page
+        # --- PART 2: GET UPCOMING GAMES ---
         response = requests.get(events_url, timeout=30, headers={
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
         response.raise_for_status()
-        
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        if debug:
-            debug_info = f"Events URL: {events_url}\n\n"
-            debug_info += f"Response Status: {response.status_code}\n\n"
-            return None, debug_info[:2000]
-            
         combined_text += "UPCOMING GAMES:\n"
         
-        # Parse the text carefully
         page_text = soup.get_text(separator='\n')
         lines = [line.strip() for line in page_text.split('\n') if line.strip()]
         
-        events_found = 0
+        date_pattern = re.compile(r'^(\d{1,2}/\d{1,2})')
+        time_pattern = re.compile(r'(\d{1,2}:\d{2}\s*[aApP][mM])')
+        
         i = 0
-        while i < len(lines) and events_found < 20:
+        while i < len(lines):
             line = lines[i]
             
-            # Look for date patterns (1/6, 1/8, etc.)
-            if len(line) < 10 and '/' in line and line[0].isdigit():
-                date = line
+            # Check for date at start of line
+            date_match = date_pattern.search(line)
+            
+            if date_match:
+                date = date_match.group(1)
+                
+                # If date and sport are merged (e.g. "1/9Boys"), separate them
+                remaining_line_content = line[len(date):].strip()
+                
                 sport = ""
                 opponent = ""
                 time = ""
                 
-                # Look ahead for sport, opponent, time
-                for j in range(i + 1, min(i + 10, len(lines))):
-                    raw_next_line = lines[j].strip()
-                    # Strip trailing asterisks for processing
-                    next_line = raw_next_line.rstrip('*').strip()
+                # Scan a block of lines to find the details for this game
+                search_block = [remaining_line_content] + lines[i+1:i+10]
+                
+                for scan_line in search_block:
+                    clean_scan = scan_line.replace('*', '').strip()
                     
-                    if len(next_line) < 2 and raw_next_line != '*':
+                    # Skip generic junk, but look for time hidden inside it first
+                    if not clean_scan or any(x in clean_scan.lower() for x in ['preview', 'watch', 'ticket', 'game', 'match']):
+                        if not time:
+                            time_match = time_pattern.search(scan_line)
+                            if time_match:
+                                time = time_match.group(1)
                         continue
                     
-                    # Detect sport
-                    if not sport and any(x in next_line for x in ['Basketball', 'Soccer', 'Football', 'Baseball', 'Volleyball']):
-                        if any(x in next_line for x in ['V.', 'JV.', 'F.', 'Varsity', 'Boys', 'Girls']):
-                            sport = next_line
+                    # Detect Sport
+                    if not sport and any(x in clean_scan for x in ['Basketball', 'Soccer', 'Football', 'Baseball', 'Volleyball']):
+                        if any(x in clean_scan for x in ['V.', 'JV.', 'F.', 'Varsity', 'Boys', 'Girls']):
+                            sport = clean_scan
                             continue
-                    
-                    # Detect opponent 
-                    if sport and not opponent:
-                        lower_line = next_line.lower()
-                        
-                        # CASE 1: Line is "vs Allen" or "@ Allen"
-                        if lower_line.startswith('vs') or lower_line.startswith('@'):
-                            opponent = next_line
-                            continue
-                        
-                        # CASE 2: Previous line was just "vs" or "@", so THIS line is "Allen"
-                        prev_line_clean = lines[j-1].rstrip('*').strip().lower()
-                        if prev_line_clean == 'vs' or prev_line_clean == '@':
-                            if not any(x in lower_line for x in ['preview', 'watch', 'game', 'match', 'ticket']):
-                                opponent = f"{prev_line_clean} {next_line}"
+                            
+                    # Detect Time (Regex Priority)
+                    if not time:
+                        time_match = time_pattern.search(scan_line)
+                        if time_match:
+                            time = time_match.group(1)
+                            if len(clean_scan) < 10: # If line was JUST time
                                 continue
                     
-                    # Detect time
-                    if ('pm' in next_line.lower() or 'am' in next_line.lower()) and ':' in next_line:
-                        time = next_line
-                        break
-                
+                    # Detect Opponent
+                    if sport and not opponent:
+                        lower = clean_scan.lower()
+                        if lower.startswith('vs') or lower.startswith('@'):
+                            opponent = clean_scan
+                        elif 'prev_line_clean' in locals() and prev_line_clean in ['vs', '@', 'vs.', 'at']:
+                            opponent = clean_scan
+                            
+                    prev_line_clean = lower if 'lower' in locals() else ""
+
                 if sport:
-                    game_info = f"{date} - {sport}"
+                    entry = f"{date}: {sport}"
                     if opponent:
-                        game_info += f" {opponent}"
+                        entry += f" {opponent}"
                     if time:
-                        game_info += f" - {time}"
+                        entry += f" - {time}"
+                    else:
+                        entry += " - Time TBD"
                         
-                    combined_text += game_info + "\n"
-                    events_found += 1
-            
+                    combined_text += entry + "\n"
+                    
             i += 1
             
-        if len(combined_text) > 300:
-            return combined_text[:8000], None
-            
-        return None, "Unable to parse full game information. View at: https://www.maxpreps.com/tx/sachse/sachse-mustangs/events/"
+        return combined_text[:8000], None
         
     except Exception as e:
         error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        error_details += "\n\nView schedule at: https://www.maxpreps.com/tx/sachse/sachse-mustangs/events/"
         return None, error_details
 
 
