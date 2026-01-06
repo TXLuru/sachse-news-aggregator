@@ -157,49 +157,52 @@ def scrape_school_board_agenda(debug=False):
 
 
 def search_sports_news(debug=False):
-    """Search for Sachse High School Mustangs sports news via ScoreStream."""
+    """Search for Sachse High School Mustangs sports news via MaxPreps."""
     import time
     
     try:
-        # Try ScoreStream widget data first
-        widget_url = "https://scorestream.com/apiJsCdn/widgets/embed.js"
-        widget_id = "67799"
+        # Try MaxPreps direct scraping first
+        maxpreps_url = "https://www.maxpreps.com/tx/sachse/sachse-mustangs/"
         
-        # ScoreStream uses a specific API endpoint for widget data
-        api_url = f"https://scorestream.com/api/widget.json?id={widget_id}"
-        
-        response = requests.get(api_url, timeout=30)
+        response = requests.get(maxpreps_url, timeout=30, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
         response.raise_for_status()
-        data = response.json()
+        
+        soup = BeautifulSoup(response.content, 'html.parser')
         
         if debug:
-            debug_info = f"ScoreStream API URL: {api_url}\n\n"
+            debug_info = f"MaxPreps URL: {maxpreps_url}\n\n"
             debug_info += f"Response Status: {response.status_code}\n\n"
-            debug_info += f"Raw Data: {str(data)[:1000]}\n"
+            
+            # Look for game scores
+            scores = soup.find_all(class_=['score', 'game', 'result'])[:10]
+            debug_info += f"Found {len(scores)} score elements\n\n"
+            for i, score in enumerate(scores[:5]):
+                debug_info += f"Score {i}: {score.get_text(strip=True)[:200]}\n"
+            
             return None, debug_info
         
-        # Parse ScoreStream data
-        combined_text = "Recent Sachse High School Mustangs Sports Updates:\n\n"
+        # Parse MaxPreps for recent games
+        combined_text = "Recent Sachse High School Mustangs Sports:\n\n"
         
-        if 'games' in data:
-            for i, game in enumerate(data['games'][:10], 1):
-                home_team = game.get('homeTeam', {}).get('name', 'Unknown')
-                away_team = game.get('awayTeam', {}).get('name', 'Unknown')
-                home_score = game.get('homeScore', '')
-                away_score = game.get('awayScore', '')
-                game_date = game.get('gameDate', '')
-                status = game.get('status', '')
-                
-                combined_text += f"Game {i}: {away_team} @ {home_team}\n"
-                if home_score and away_score:
-                    combined_text += f"Score: {away_team} {away_score} - {home_team} {home_score}\n"
-                combined_text += f"Date: {game_date}, Status: {status}\n\n"
+        # Find game containers
+        games = soup.find_all(['div', 'article'], class_=lambda x: x and ('game' in x.lower() or 'contest' in x.lower()))
+        
+        if not games:
+            # Try alternative selectors
+            games = soup.find_all(['div', 'tr'], attrs={'data-game': True})
+        
+        for i, game in enumerate(games[:10], 1):
+            game_text = game.get_text(strip=True)
+            if len(game_text) > 20:
+                combined_text += f"Game {i}: {game_text}\n\n"
         
         if len(combined_text) > 100:
             return combined_text[:8000], None
         
-        # Fallback to DuckDuckGo if ScoreStream fails
-        st.write("ScoreStream unavailable, falling back to DuckDuckGo...")
+        # Fallback to DuckDuckGo with retry
+        st.write("MaxPreps scraping unsuccessful, trying DuckDuckGo...")
         ddgs = DDGS()
         query = "Sachse High School Mustangs sports results last week"
         
@@ -218,7 +221,7 @@ def search_sports_news(debug=False):
         if not results:
             return None, "No search results returned from DuckDuckGo"
         
-        combined_text = ""
+        combined_text = "Sachse High School Mustangs Sports News:\n\n"
         for i, result in enumerate(results, 1):
             combined_text += f"Source {i}: {result.get('title', '')}\n"
             combined_text += f"{result.get('body', '')}\n\n"
@@ -229,7 +232,7 @@ def search_sports_news(debug=False):
         error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
         
         if "Ratelimit" in str(e):
-            error_details += "\n\nDuckDuckGo is rate limiting requests. Wait a few minutes and try again, or search manually at: https://www.maxpreps.com/tx/sachse/sachse-mustangs/"
+            error_details += "\n\nDuckDuckGo is rate limiting requests. Try manually checking: https://www.maxpreps.com/tx/sachse/sachse-mustangs/"
         
         return None, error_details
 
