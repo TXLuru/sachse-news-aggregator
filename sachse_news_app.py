@@ -9,7 +9,7 @@ import traceback
 from datetime import datetime
 
 
-def scrape_city_council_agenda():
+def scrape_city_council_agenda(debug=False):
     """Scrape the latest City Council meeting agenda packet."""
     try:
         url = "https://sachsetx.portal.civicclerk.com/"
@@ -17,6 +17,26 @@ def scrape_city_council_agenda():
         response.raise_for_status()
         
         soup = BeautifulSoup(response.content, 'html.parser')
+        
+        if debug:
+            # Show what we're finding
+            debug_info = f"URL: {url}\n\n"
+            debug_info += f"Response Status: {response.status_code}\n\n"
+            debug_info += "=== Available table rows ===\n"
+            all_rows = soup.find_all('tr')
+            debug_info += f"Found {len(all_rows)} total <tr> elements\n\n"
+            
+            for idx, row in enumerate(all_rows[:10]):  # First 10 rows
+                debug_info += f"Row {idx}:\n"
+                debug_info += f"  Classes: {row.get('class', [])}\n"
+                debug_info += f"  Text: {row.get_text(strip=True)[:200]}\n\n"
+            
+            debug_info += "\n=== All links found ===\n"
+            all_links = soup.find_all('a', href=True)
+            for idx, link in enumerate(all_links[:20]):  # First 20 links
+                debug_info += f"Link {idx}: {link.get_text(strip=True)[:100]} -> {link.get('href')}\n"
+            
+            return None, debug_info
         
         # Find all meeting rows - looking for City Council meetings
         meeting_rows = soup.find_all('tr', class_='meeting-row')
@@ -54,7 +74,7 @@ def scrape_city_council_agenda():
         return None, error_details
 
 
-def scrape_school_board_agenda():
+def scrape_school_board_agenda(debug=False):
     """Scrape the latest Garland ISD School Board meeting agenda."""
     try:
         url = "https://meetings.boardbook.org/public/Organization/1084"
@@ -62,6 +82,21 @@ def scrape_school_board_agenda():
         response.raise_for_status()
         
         soup = BeautifulSoup(response.content, 'html.parser')
+        
+        if debug:
+            debug_info = f"URL: {url}\n\n"
+            debug_info += f"Response Status: {response.status_code}\n\n"
+            debug_info += "=== All links found ===\n"
+            all_links = soup.find_all('a', href=True)
+            for idx, link in enumerate(all_links[:30]):  # First 30 links
+                debug_info += f"Link {idx}: {link.get_text(strip=True)[:100]} -> {link.get('href')}\n"
+            
+            debug_info += "\n=== Page title ===\n"
+            title = soup.find('title')
+            if title:
+                debug_info += f"{title.get_text()}\n"
+            
+            return None, debug_info
         
         # Look for meeting links - typically "Regular Meeting"
         meeting_links = soup.find_all('a', href=True)
@@ -107,12 +142,24 @@ def scrape_school_board_agenda():
         return None, error_details
 
 
-def search_sports_news():
+def search_sports_news(debug=False):
     """Search for Sachse High School Mustangs sports news."""
     try:
         ddgs = DDGS()
         query = "Sachse High School Mustangs sports results last week"
         results = ddgs.text(query, max_results=10)
+        
+        if debug:
+            debug_info = f"Query: {query}\n\n"
+            debug_info += f"Number of results: {len(results) if results else 0}\n\n"
+            if results:
+                debug_info += "=== Search Results ===\n"
+                for i, result in enumerate(results, 1):
+                    debug_info += f"\nResult {i}:\n"
+                    debug_info += f"  Title: {result.get('title', 'N/A')}\n"
+                    debug_info += f"  URL: {result.get('href', 'N/A')}\n"
+                    debug_info += f"  Body: {result.get('body', 'N/A')[:200]}\n"
+            return None, debug_info
         
         if not results:
             return None, "No search results returned"
@@ -219,6 +266,10 @@ def main():
     
     st.sidebar.markdown("---")
     
+    debug_mode = st.sidebar.checkbox("Enable Debug Mode", value=False, help="Show detailed HTML structure for troubleshooting")
+    
+    st.sidebar.markdown("---")
+    
     generate_button = st.sidebar.button("Generate Newsletter", type="primary", use_container_width=True)
     
     # Main content area
@@ -241,7 +292,7 @@ def main():
         if run_city_council:
             with st.status("Scraping City Council agenda...", expanded=True) as status:
                 st.write("Fetching latest meeting documents...")
-                council_text, error = scrape_city_council_agenda()
+                council_text, error = scrape_city_council_agenda(debug=debug_mode)
                 
                 if council_text:
                     st.write("Generating summary with AI...")
@@ -256,19 +307,24 @@ def main():
                         newsletter_sections.append("*Unable to generate summary at this time.*\n")
                         status.update(label="City Council: Summary failed", state="error")
                 else:
-                    newsletter_sections.append("## City Hall Updates\n")
-                    newsletter_sections.append("*Could not retrieve City Council data. Please check back later.*\n")
-                    status.update(label="City Council: Data retrieval failed", state="error")
+                    if debug_mode:
+                        newsletter_sections.append("## City Hall Updates\n")
+                        newsletter_sections.append("*Debug mode enabled - see details below*\n")
+                        status.update(label="City Council: Debug Info Ready", state="complete")
+                    else:
+                        newsletter_sections.append("## City Hall Updates\n")
+                        newsletter_sections.append("*Could not retrieve City Council data. Please check back later.*\n")
+                        status.update(label="City Council: Data retrieval failed", state="error")
                     
-                    # Show error details in expander
-                    with st.expander("View Error Details"):
+                    # Show error/debug details in expander
+                    with st.expander("View Debug/Error Details"):
                         st.code(error, language="text")
         
         # Agent 2: School Board
         if run_school_board:
             with st.status("Scraping School Board agenda...", expanded=True) as status:
                 st.write("Fetching latest meeting documents...")
-                school_text, error = scrape_school_board_agenda()
+                school_text, error = scrape_school_board_agenda(debug=debug_mode)
                 
                 if school_text:
                     st.write("Generating summary with AI...")
@@ -283,12 +339,17 @@ def main():
                         newsletter_sections.append("*Unable to generate summary at this time.*\n")
                         status.update(label="School Board: Summary failed", state="error")
                 else:
-                    newsletter_sections.append("## School Board Updates\n")
-                    newsletter_sections.append("*Could not retrieve School Board data. Please check back later.*\n")
-                    status.update(label="School Board: Data retrieval failed", state="error")
+                    if debug_mode:
+                        newsletter_sections.append("## School Board Updates\n")
+                        newsletter_sections.append("*Debug mode enabled - see details below*\n")
+                        status.update(label="School Board: Debug Info Ready", state="complete")
+                    else:
+                        newsletter_sections.append("## School Board Updates\n")
+                        newsletter_sections.append("*Could not retrieve School Board data. Please check back later.*\n")
+                        status.update(label="School Board: Data retrieval failed", state="error")
                     
-                    # Show error details in expander
-                    with st.expander("View Error Details"):
+                    # Show error/debug details in expander
+                    with st.expander("View Debug/Error Details"):
                         st.code(error, language="text")
         
         # Agent 3: Sports
