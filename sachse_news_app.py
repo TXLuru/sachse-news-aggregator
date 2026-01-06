@@ -3,20 +3,16 @@ import requests
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 from io import BytesIO
-from duckduckgo_search import DDGS
 from openai import OpenAI
 import traceback
 from datetime import datetime
 import re
 
-# Check if Selenium is available
+# Check if Selenium is available (Optional)
 try:
     from selenium import webdriver
     from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
     from selenium.webdriver.chrome.options import Options
-    from selenium.webdriver.chrome.service import Service
     from webdriver_manager.chrome import ChromeDriverManager
     SELENIUM_AVAILABLE = True
 except ImportError:
@@ -33,23 +29,7 @@ def scrape_city_council_agenda(debug=False, use_selenium=False):
         soup = BeautifulSoup(response.content, 'html.parser')
         
         if debug:
-            debug_info = f"URL: {url}\n\n"
-            debug_info += f"Response Status: {response.status_code}\n\n"
-            debug_info += "=== All links found ===\n"
-            all_links = soup.find_all('a', href=True)
-            debug_info += f"Total links: {len(all_links)}\n\n"
-            
-            civicclerk_links = [link for link in all_links if 'civicclerk' in link.get('href', '').lower()]
-            debug_info += f"\n=== CivicClerk links ({len(civicclerk_links)}) ===\n"
-            for idx, link in enumerate(civicclerk_links[:10]):
-                debug_info += f"Link {idx}: {link.get_text(strip=True)[:100]} -> {link.get('href')}\n"
-            
-            pdf_links = [link for link in all_links if '.pdf' in link.get('href', '').lower()]
-            debug_info += f"\n=== PDF links ({len(pdf_links)}) ===\n"
-            for idx, link in enumerate(pdf_links[:10]):
-                debug_info += f"PDF {idx}: {link.get_text(strip=True)[:100]} -> {link.get('href')}\n"
-            
-            return None, debug_info
+            return None, f"Debug mode: Found {len(soup.find_all('a'))} links."
         
         all_links = soup.find_all('a', href=True)
         
@@ -70,7 +50,7 @@ def scrape_city_council_agenda(debug=False, use_selenium=False):
                     reader = PdfReader(pdf_file)
                     
                     text = ""
-                    max_pages = min(50, len(reader.pages))
+                    max_pages = min(30, len(reader.pages))
                     for i in range(max_pages):
                         text += reader.pages[i].extract_text()
                     
@@ -79,10 +59,9 @@ def scrape_city_council_agenda(debug=False, use_selenium=False):
                 except:
                     continue
         
-        return None, "City Council uses CivicClerk which requires JavaScript. The site shows agendas at: https://sachsetx.portal.civicclerk.com/ but cannot be scraped with basic tools."
+        return None, "City Council uses CivicClerk. Please upload PDF manually or check https://sachsetx.portal.civicclerk.com/"
     except Exception as e:
-        error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        return None, error_details
+        return None, str(e)
 
 
 def scrape_school_board_agenda(debug=False):
@@ -94,18 +73,6 @@ def scrape_school_board_agenda(debug=False):
         
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        if debug:
-            debug_info = f"URL: {url}\n\n"
-            debug_info += f"Response Status: {response.status_code}\n\n"
-            debug_info += "=== All Agenda links found ===\n"
-            all_links = soup.find_all('a', href=True)
-            agenda_links = [link for link in all_links if 'Agenda' in link.get_text()]
-            debug_info += f"Found {len(agenda_links)} agenda links\n\n"
-            for idx, link in enumerate(agenda_links[:10]):
-                debug_info += f"Agenda {idx}: {link.get_text(strip=True)} -> {link.get('href')}\n"
-            
-            return None, debug_info
-        
         all_links = soup.find_all('a', href=True)
         
         for link in all_links:
@@ -116,365 +83,201 @@ def scrape_school_board_agenda(debug=False):
                     agenda_url = f"https://meetings.boardbook.org{agenda_url}"
                 
                 agenda_response = requests.get(agenda_url, timeout=30)
-                agenda_response.raise_for_status()
                 agenda_soup = BeautifulSoup(agenda_response.content, 'html.parser')
                 
                 pdf_links = agenda_soup.find_all('a', href=True)
                 
                 for pdf_link in pdf_links:
                     href = pdf_link.get('href', '')
-                    pdf_text = pdf_link.get_text(strip=True).lower()
-                    
-                    if '.pdf' in href.lower() or 'download' in pdf_text or 'pdf' in pdf_text:
+                    if '.pdf' in href.lower() or 'download' in pdf_link.get_text(strip=True).lower():
                         pdf_url = href
                         if not pdf_url.startswith('http'):
                             pdf_url = f"https://meetings.boardbook.org{pdf_url}"
                         
                         pdf_response = requests.get(pdf_url, timeout=60)
-                        pdf_response.raise_for_status()
-                        
                         if pdf_response.headers.get('content-type', '').lower().startswith('application/pdf'):
                             pdf_file = BytesIO(pdf_response.content)
                             reader = PdfReader(pdf_file)
-                            
                             text = ""
-                            max_pages = min(50, len(reader.pages))
+                            max_pages = min(30, len(reader.pages))
                             for i in range(max_pages):
                                 text += reader.pages[i].extract_text()
-                            
                             if len(text.strip()) > 100:
                                 return text[:15000], None
-                
-                main_content = agenda_soup.find('div', class_='main-content') or agenda_soup.find('main')
-                if main_content:
-                    text = main_content.get_text(separator='\n', strip=True)
-                    if len(text) > 100:
-                        return text[:15000], None
+                                
+                # Fallback to HTML content
+                main = agenda_soup.find('div', class_='main-content') or agenda_soup.find('main')
+                if main:
+                    return main.get_text(separator='\n')[:15000], None
         
-        return None, "No School Board agenda with downloadable content found"
+        return None, "No School Board agenda found."
     except Exception as e:
-        error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        return None, error_details
+        return None, str(e)
 
 
 def search_sports_news(debug=False):
     """
     AI-FIRST APPROACH: 
-    Grab all text from the MaxPreps events page and let the AI sort it out.
+    Grab raw text from MaxPreps and let GPT-4o sort it out.
     """
     try:
         events_url = "https://www.maxpreps.com/tx/sachse/sachse-mustangs/events/"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         
-        response = requests.get(events_url, timeout=30, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
+        response = requests.get(events_url, headers=headers, timeout=30)
         response.raise_for_status()
         
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Grab strictly text, separating by newline
-        full_text = soup.get_text(separator='\n')
+        # KEY CHANGE: Use ' | ' separator. This prevents words from getting mashed together.
+        full_text = soup.get_text(separator=' | ')
         
-        # Simple Filter: Remove totally irrelevant lines (empty, short, or nav links)
-        # This keeps the token count down while preserving the "messy" schedule data
+        # Simple Filter: Remove totally irrelevant lines
         relevant_lines = []
         for line in full_text.split('\n'):
             clean = line.strip()
-            # Keep lines that have numbers (dates/times) or sport keywords
             if len(clean) > 2:
+                # Keep lines with numbers or sport keywords
                 if any(char.isdigit() for char in clean) or \
-                   any(word in clean.lower() for word in ['basketball', 'soccer', 'football', 'baseball', 'volleyball', 'vs', '@', 'sachse', 'mustangs', 'varsity', 'jv', 'scrimmage']):
+                   any(word in clean.lower() for word in ['basketball', 'soccer', 'football', 'baseball', 'volleyball', 'vs', '@', 'sachse', 'mustangs']):
                     relevant_lines.append(clean)
         
-        # Return a large chunk of text. The AI will parse this mess.
         final_text = "\n".join(relevant_lines)
-        return final_text[:15000], None
+        return final_text[:20000], None 
         
     except Exception as e:
-        error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        return None, error_details
+        return None, str(e)
 
 
 def summarize_with_llm(client, content, section_type):
-    """Use OpenAI to summarize content based on section type."""
-    prompts = {
-        "city_council": """You are a local news writer. Summarize the following City Council agenda into a "City Hall Updates" section.
+    """Use OpenAI to summarize content."""
+    
+    if section_type == "city_council":
+        prompt = f"""You are a local news reporter. Summarize this City Council agenda.
+        Focus on taxes, zoning, and resident impact. Keep it to 3-4 bullet points.
+        Content: {content}"""
 
-Focus on:
-- Tax-related items
-- Zoning changes or development projects
-- Major contracts or expenditures
-- Decisions that affect residents
+    elif section_type == "school_board":
+        prompt = f"""You are an education reporter. Summarize this School Board agenda.
+        Focus on calendar changes, bonds, and student impact. Keep it to 3-4 bullet points.
+        Content: {content}"""
 
-Write in a clear, conversational style. Keep it concise (200-300 words). Use bullet points for key items.
+    elif section_type == "sports":
+        # UPDATED PROMPT FOR TABLE OUTPUT
+        prompt = f"""You are a Sports Editor. I am providing you with RAW, MESSY text from a schedule website.
 
-Content:
-{content}""",
+        **Your Goal:** Find the Upcoming Schedule and format it as a Markdown Table.
+
+        **Rules:**
+        1. **Look Ahead:** The text is messy. The opponent name might be on the line *after* the sport or time. 
+        2. **Ignore History:** Ignore games with scores (e.g., "L 50-60"). Only list future games.
+        3. **Infer Opponents:** If you see "vs" or "@" followed by a name, that is the opponent.
         
-        "school_board": """You are a local education reporter. Summarize the following School Board agenda into a "School Board Updates" section.
-
-Focus on:
-- School calendar changes
-- Bond projects or facility updates
-- Policy decisions affecting Sachse schools specifically
-- Budget or staffing matters
-
-Write in a clear, conversational style. Keep it concise (200-300 words). Use bullet points for key items.
-
-Content:
-{content}""",
+        **Output Format:**
         
-        "sports": """You are a Sports Editor. I am providing you with RAW, MESSY text scraped from a high school sports schedule website (MaxPreps).
+        **Mustang Sports Minute**
+        [Write 2 sentences about the team's recent performance/record found in the text]
 
-Your Task:
-1. Scan the text to find the **Upcoming Schedule**.
-2. IGNORE past scores (games with numeric results like 13-4). Look for future dates.
-3. Extract the Date, Sport, Opponent, and Time.
-4. If the opponent name is on a different line or hard to find, infer it from the context (e.g. if it says "vs" and the next line is "Rowlett", the opponent is Rowlett).
+        **This Week's Schedule**
+        | Date | Sport | Opponent | Time |
+        | :--- | :--- | :--- | :--- |
+        | [Date] | [Sport] | [Opponent] | [Time] |
 
-**Format Output Exactly As:**
+        (If a specific detail is missing in the text, write "TBD")
 
-**Mustang Sports Minute**
-[Write 2 sentences about the team's season so far based on any records found in the text]
-
-**This Week's Schedule**
-Create a Markdown table with the following columns:
-| Date | Sport | Opponent | Time |
-|---|---|---|---|
-| [Date] | [Sport] | [Opponent] | [Time] |
-
-(If a detail is missing, write "TBD")
-
-Raw Text:
-{content}"""
-    }
+        **Raw Text to Analyze:**
+        {content}"""
     
     try:
-        prompt = prompts[section_type].format(content=content)
-        
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",  # <--- CHANGED TO GPT-4o (Smartest Model)
             messages=[
-                {"role": "system", "content": "You are a professional local news writer creating content for a community newsletter."},
+                {"role": "system", "content": "You are a professional local news writer."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.5, # Lower temperature for more factual extraction
+            temperature=0.5,
             max_tokens=1000
         )
-        
         return response.choices[0].message.content
     except Exception as e:
-        st.error(f"LLM error for {section_type}: {str(e)}")
-        return None
+        return f"Error generating summary: {str(e)}"
 
 
 def main():
-    st.set_page_config(
-        page_title="Sachse News Aggregator",
-        page_icon="📰",
-        layout="wide"
-    )
+    st.set_page_config(page_title="Sachse News Aggregator", page_icon="📰", layout="wide")
     
     st.title("Sachse, TX - Local News Aggregator")
     st.markdown("*Automated weekly newsletter generation*")
     
     st.sidebar.header("Configuration")
-    
-    api_key = st.sidebar.text_input(
-        "OpenAI API Key",
-        type="password",
-        help="Enter your OpenAI API key to generate summaries"
-    )
+    api_key = st.sidebar.text_input("OpenAI API Key", type="password")
     
     st.sidebar.markdown("---")
-    st.sidebar.subheader("Select News Sources")
+    run_council = st.sidebar.checkbox("City Council", value=True)
     
-    run_city_council = st.sidebar.checkbox("City Council Updates", value=True)
-    
-    use_selenium = False
+    # Council Upload Logic
     uploaded_council_pdf = None
-    if run_city_council:
-        st.sidebar.markdown("**City Council Options:**")
-        if SELENIUM_AVAILABLE:
-            use_selenium = st.sidebar.checkbox(
-                "Use Selenium (full automation)",
-                value=True,
-                help="Uses browser automation to handle JavaScript"
-            )
-        else:
-            st.sidebar.info("Install Selenium for full automation: pip install selenium webdriver-manager")
-        
-        if not use_selenium:
-            uploaded_council_pdf = st.sidebar.file_uploader(
-                "Or upload Council PDF(s) manually",
-                type=['pdf'],
-                accept_multiple_files=True,
-                help="Download from https://sachsetx.portal.civicclerk.com/"
-            )
-    
-    run_school_board = st.sidebar.checkbox("School Board Updates", value=True)
-    run_sports = st.sidebar.checkbox("Mustang Sports Minute", value=True)
-    
-    st.sidebar.markdown("---")
-    
-    debug_mode = st.sidebar.checkbox("Enable Debug Mode", value=False, help="Show detailed HTML structure for troubleshooting")
-    
-    st.sidebar.markdown("---")
-    
-    generate_button = st.sidebar.button("Generate Newsletter", type="primary", use_container_width=True)
-    
-    if generate_button:
-        if not api_key:
-            st.error("Please enter your OpenAI API key in the sidebar.")
-            return
-        
-        if not (run_city_council or run_school_board or run_sports):
-            st.warning("Please select at least one news source.")
-            return
-        
-        client = OpenAI(api_key=api_key)
-        
-        newsletter_sections = []
-        newsletter_sections.append(f"# Sachse Weekly Newsletter")
-        newsletter_sections.append(f"*Generated on {datetime.now().strftime('%B %d, %Y')}*\n")
-        
-        council_error = None
-        school_error = None
-        sports_error = None
-        
-        if run_city_council:
-            with st.status("Processing City Council agenda...", expanded=True) as status:
-                council_text = None
-                
-                if uploaded_council_pdf:
-                    st.write(f"Processing {len(uploaded_council_pdf)} uploaded PDF(s)...")
-                    try:
-                        combined_text = ""
-                        for pdf_file_upload in uploaded_council_pdf:
-                            pdf_file = BytesIO(pdf_file_upload.read())
-                            reader = PdfReader(pdf_file)
-                            max_pages = min(50, len(reader.pages))
-                            for i in range(max_pages):
-                                combined_text += reader.pages[i].extract_text()
-                        
-                        if len(combined_text.strip()) > 100:
-                            council_text = combined_text[:15000]
-                    except Exception as e:
-                        council_error = f"Error processing uploaded PDF: {str(e)}"
-                else:
-                    st.write("Attempting basic scraping...")
-                    council_text, council_error = scrape_city_council_agenda(debug=debug_mode)
-                
-                if council_text:
-                    st.write("Generating summary with AI...")
-                    summary = summarize_with_llm(client, council_text, "city_council")
-                    if summary:
-                        newsletter_sections.append("## City Hall Updates\n")
-                        newsletter_sections.append(summary + "\n")
-                        status.update(label="City Council: Complete", state="complete")
-                    else:
-                        newsletter_sections.append("## City Hall Updates\n")
-                        newsletter_sections.append("*Unable to generate summary at this time.*\n")
-                        status.update(label="City Council: Summary failed", state="error")
-                else:
-                    newsletter_sections.append("## City Hall Updates\n")
-                    if debug_mode:
-                        newsletter_sections.append("*Debug mode enabled - see details below*\n")
-                        status.update(label="City Council: Debug Info Ready", state="complete")
-                    else:
-                        newsletter_sections.append("*No agenda PDFs found on the main website. Please upload a PDF manually from [CivicClerk](https://sachsetx.portal.civicclerk.com/)*\n")
-                        status.update(label="City Council: Manual upload needed", state="error")
-            
-            if council_error:
-                with st.expander("View City Council Debug/Error Details"):
-                    st.code(council_error, language="text")
-        
-        if run_school_board:
-            with st.status("Scraping School Board agenda...", expanded=True) as status:
-                st.write("Fetching latest meeting documents...")
-                school_text, school_error = scrape_school_board_agenda(debug=debug_mode)
-                
-                if school_text:
-                    st.write("Generating summary with AI...")
-                    summary = summarize_with_llm(client, school_text, "school_board")
-                    if summary:
-                        newsletter_sections.append("## School Board Updates\n")
-                        newsletter_sections.append(summary + "\n")
-                        status.update(label="School Board: Complete", state="complete")
-                    else:
-                        newsletter_sections.append("## School Board Updates\n")
-                        newsletter_sections.append("*Unable to generate summary at this time.*\n")
-                        status.update(label="School Board: Summary failed", state="error")
-                else:
-                    newsletter_sections.append("## School Board Updates\n")
-                    if debug_mode:
-                        newsletter_sections.append("*Debug mode enabled - see details below*\n")
-                        status.update(label="School Board: Debug Info Ready", state="complete")
-                    else:
-                        newsletter_sections.append("*Could not retrieve School Board data.*\n")
-                        status.update(label="School Board: Data retrieval failed", state="error")
-            
-            if school_error:
-                with st.expander("View School Board Debug/Error Details"):
-                    st.code(school_error, language="text")
-        
-        if run_sports:
-            with st.status("Searching for sports news...", expanded=True) as status:
-                st.write("Querying DuckDuckGo for Mustang sports...")
-                sports_text, sports_error = search_sports_news(debug=debug_mode)
-                
-                if sports_text:
-                    st.write("Generating sports report with AI...")
-                    summary = summarize_with_llm(client, sports_text, "sports")
-                    if summary:
-                        newsletter_sections.append("## Mustang Sports Minute\n")
-                        newsletter_sections.append(summary + "\n")
-                        status.update(label="Sports: Complete", state="complete")
-                    else:
-                        newsletter_sections.append("## Mustang Sports Minute\n")
-                        newsletter_sections.append("*Unable to generate sports report at this time.*\n")
-                        status.update(label="Sports: Summary failed", state="error")
-                else:
-                    newsletter_sections.append("## Mustang Sports Minute\n")
-                    if debug_mode:
-                        newsletter_sections.append("*Debug mode enabled - see details below*\n")
-                        status.update(label="Sports: Debug Info Ready", state="complete")
-                    else:
-                        newsletter_sections.append("*Could not retrieve sports data.*\n")
-                        status.update(label="Sports: Data retrieval failed", state="error")
-            
-            if sports_error:
-                with st.expander("View Sports Debug/Error Details"):
-                    st.code(sports_error, language="text")
-        
-        newsletter_content = "\n".join(newsletter_sections)
-        
-        st.markdown("---")
-        st.subheader("Your Newsletter")
-        st.markdown(newsletter_content)
-        
-        st.download_button(
-            label="Download Newsletter.md",
-            data=newsletter_content,
-            file_name=f"sachse_newsletter_{datetime.now().strftime('%Y%m%d')}.md",
-            mime="text/markdown"
-        )
-    
-    else:
-        st.info("Configure your settings in the sidebar and click 'Generate Newsletter' to start.")
-        
-        st.markdown("""
-        ### About This Tool
-        
-        This application automatically aggregates local news from three sources:
-        
-        1. **City Council Updates** - Summarizes the latest City Council meeting agenda
-        2. **School Board Updates** - Summarizes Garland ISD Board meetings
-        3. **Mustang Sports Minute** - Compiles recent Sachse High School sports news
-        
-        The AI will generate concise, readable summaries focused on information relevant to Sachse residents.
-        """)
+    if run_council:
+        uploaded_council_pdf = st.sidebar.file_uploader("Or upload Council PDF manually", type=['pdf'], accept_multiple_files=True)
 
+    run_school = st.sidebar.checkbox("School Board", value=True)
+    run_sports = st.sidebar.checkbox("Sports", value=True)
+    
+    st.sidebar.markdown("---")
+    debug_mode = st.sidebar.checkbox("Debug Mode", value=False)
+    
+    if st.sidebar.button("Generate Newsletter", type="primary"):
+        if not api_key:
+            st.error("Please enter your OpenAI API Key.")
+            return
+            
+        client = OpenAI(api_key=api_key)
+        newsletter = [f"# Sachse Weekly Newsletter\n*{datetime.now().strftime('%B %d, %Y')}*\n"]
+        
+        # --- CITY COUNCIL ---
+        if run_council:
+            with st.status("Processing City Council..."):
+                text = None
+                if uploaded_council_pdf:
+                    text = ""
+                    for pdf in uploaded_council_pdf:
+                        reader = PdfReader(BytesIO(pdf.read()))
+                        for page in reader.pages: text += page.extract_text()
+                else:
+                    text, err = scrape_city_council_agenda(debug=debug_mode)
+                
+                if text:
+                    summary = summarize_with_llm(client, text, "city_council")
+                    newsletter.append("## City Hall Updates\n" + summary + "\n")
+                else:
+                    newsletter.append("## City Hall Updates\n*No agenda found.*\n")
+        
+        # --- SCHOOL BOARD ---
+        if run_school:
+            with st.status("Processing School Board..."):
+                text, err = scrape_school_board_agenda(debug=debug_mode)
+                if text:
+                    summary = summarize_with_llm(client, text, "school_board")
+                    newsletter.append("## School Board Updates\n" + summary + "\n")
+                else:
+                    newsletter.append("## School Board Updates\n*No agenda found.*\n")
+
+        # --- SPORTS ---
+        if run_sports:
+            with st.status("Processing Sports..."):
+                text, err = search_sports_news(debug=debug_mode)
+                if text:
+                    summary = summarize_with_llm(client, text, "sports")
+                    newsletter.append(summary + "\n")
+                    if debug_mode: st.text_area("Raw Sports Text", text[:1000])
+                else:
+                    newsletter.append("## Mustang Sports Minute\n*Could not retrieve sports data.*\n")
+
+        # --- FINAL OUTPUT ---
+        st.markdown("---")
+        full_content = "\n".join(newsletter)
+        st.markdown(full_content)
+        st.download_button("Download Newsletter", data=full_content, file_name="sachse_newsletter.md")
 
 if __name__ == "__main__":
     main()
