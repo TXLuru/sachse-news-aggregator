@@ -1,6 +1,2 @@
 chromium
-chromium-driverchromium
-chromium-driver
-chromium
-chromium-chromedriverchromium
 chromium-driver
