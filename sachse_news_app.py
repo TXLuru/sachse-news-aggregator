@@ -174,13 +174,11 @@ def search_sports_news(debug=False):
             soup = BeautifulSoup(response.content, 'html.parser')
             
             page_text = soup.get_text()
-            # Extract team records if visible (e.g., "13-8", "10-10")
             if "Basketball" in page_text or "Soccer" in page_text:
                 combined_text += "RECENT TEAM RECORDS:\n"
                 lines = page_text.split('\n')
                 for i, line in enumerate(lines):
                     if 'V. Girls Basketball' in line or 'V. Boys Basketball' in line or 'V. Girls Soccer' in line or 'V. Boys Soccer' in line:
-                        # Look for scores in nearby lines
                         for j in range(i, min(i + 5, len(lines))):
                             if '-' in lines[j] and lines[j].count('-') == 1:
                                 parts = lines[j].strip().split('-')
@@ -190,7 +188,7 @@ def search_sports_news(debug=False):
                 combined_text += "\n"
         except:
             pass
-        
+            
         # Get upcoming games from events page
         response = requests.get(events_url, timeout=30, headers={
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -203,10 +201,10 @@ def search_sports_news(debug=False):
             debug_info = f"Events URL: {events_url}\n\n"
             debug_info += f"Response Status: {response.status_code}\n\n"
             return None, debug_info[:2000]
-        
+            
         combined_text += "UPCOMING GAMES:\n"
         
-        # Parse the text more carefully to extract complete game info
+        # Parse the text carefully
         page_text = soup.get_text(separator='\n')
         lines = [line.strip() for line in page_text.split('\n') if line.strip()]
         
@@ -221,14 +219,14 @@ def search_sports_news(debug=False):
                 sport = ""
                 opponent = ""
                 time = ""
-                location = ""
                 
                 # Look ahead for sport, opponent, time
                 for j in range(i + 1, min(i + 10, len(lines))):
-                    next_line = lines[j].strip()
+                    raw_next_line = lines[j].strip()
+                    # Strip trailing asterisks for processing
+                    next_line = raw_next_line.rstrip('*').strip()
                     
-                    # Skip empty or very short lines
-                    if len(next_line) < 2:
+                    if len(next_line) < 2 and raw_next_line != '*':
                         continue
                     
                     # Detect sport
@@ -237,15 +235,20 @@ def search_sports_news(debug=False):
                             sport = next_line
                             continue
                     
-                    # Detect opponent (vs or @)
+                    # Detect opponent 
                     if sport and not opponent:
-                        if next_line.startswith('vs') or next_line.startswith('@'):
+                        lower_line = next_line.lower()
+                        
+                        # CASE 1: Line is "vs Allen" or "@ Allen"
+                        if lower_line.startswith('vs') or lower_line.startswith('@'):
                             opponent = next_line
                             continue
-                        # Sometimes opponent name comes right after vs/@ symbol
-                        elif 'vs' in lines[j-1] or '@' in lines[j-1]:
-                            if len(next_line) > 3 and not any(x in next_line.lower() for x in ['preview', 'watch', 'game', 'match', 'ticket']):
-                                opponent = next_line
+                        
+                        # CASE 2: Previous line was just "vs" or "@", so THIS line is "Allen"
+                        prev_line_clean = lines[j-1].rstrip('*').strip().lower()
+                        if prev_line_clean == 'vs' or prev_line_clean == '@':
+                            if not any(x in lower_line for x in ['preview', 'watch', 'game', 'match', 'ticket']):
+                                opponent = f"{prev_line_clean} {next_line}"
                                 continue
                     
                     # Detect time
@@ -253,22 +256,21 @@ def search_sports_news(debug=False):
                         time = next_line
                         break
                 
-                # Format and add if we have enough info
                 if sport:
                     game_info = f"{date} - {sport}"
                     if opponent:
                         game_info += f" {opponent}"
                     if time:
                         game_info += f" - {time}"
-                    
+                        
                     combined_text += game_info + "\n"
                     events_found += 1
             
             i += 1
-        
+            
         if len(combined_text) > 300:
             return combined_text[:8000], None
-        
+            
         return None, "Unable to parse full game information. View at: https://www.maxpreps.com/tx/sachse/sachse-mustangs/events/"
         
     except Exception as e:
