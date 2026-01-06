@@ -46,12 +46,12 @@ def scrape_city_council_agenda():
                         for i in range(max_pages):
                             text += reader.pages[i].extract_text()
                         
-                        return text[:15000]  # Limit to ~15k chars for API
+                        return text[:15000], None  # Success, no error
         
-        return None
+        return None, "No City Council meeting with Agenda Packet found"
     except Exception as e:
-        st.warning(f"City Council scraper error: {str(e)}")
-        return None
+        error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+        return None, error_details
 
 
 def scrape_school_board_agenda():
@@ -99,12 +99,12 @@ def scrape_school_board_agenda():
                         for i in range(max_pages):
                             text += reader.pages[i].extract_text()
                         
-                        return text[:15000]
+                        return text[:15000], None  # Success, no error
         
-        return None
+        return None, "No School Board meeting with agenda found"
     except Exception as e:
-        st.warning(f"School Board scraper error: {str(e)}")
-        return None
+        error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+        return None, error_details
 
 
 def search_sports_news():
@@ -115,7 +115,7 @@ def search_sports_news():
         results = ddgs.text(query, max_results=10)
         
         if not results:
-            return None
+            return None, "No search results returned"
         
         # Combine search snippets
         combined_text = ""
@@ -123,10 +123,10 @@ def search_sports_news():
             combined_text += f"Source {i}: {result.get('title', '')}\n"
             combined_text += f"{result.get('body', '')}\n\n"
         
-        return combined_text[:8000]
+        return combined_text[:8000], None  # Success, no error
     except Exception as e:
-        st.warning(f"Sports search error: {str(e)}")
-        return None
+        error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+        return None, error_details
 
 
 def summarize_with_llm(client, content, section_type):
@@ -241,7 +241,7 @@ def main():
         if run_city_council:
             with st.status("Scraping City Council agenda...", expanded=True) as status:
                 st.write("Fetching latest meeting documents...")
-                council_text = scrape_city_council_agenda()
+                council_text, error = scrape_city_council_agenda()
                 
                 if council_text:
                     st.write("Generating summary with AI...")
@@ -259,12 +259,16 @@ def main():
                     newsletter_sections.append("## City Hall Updates\n")
                     newsletter_sections.append("*Could not retrieve City Council data. Please check back later.*\n")
                     status.update(label="City Council: Data retrieval failed", state="error")
+                    
+                    # Show error details in expander
+                    with st.expander("View Error Details"):
+                        st.code(error, language="text")
         
         # Agent 2: School Board
         if run_school_board:
             with st.status("Scraping School Board agenda...", expanded=True) as status:
                 st.write("Fetching latest meeting documents...")
-                school_text = scrape_school_board_agenda()
+                school_text, error = scrape_school_board_agenda()
                 
                 if school_text:
                     st.write("Generating summary with AI...")
@@ -282,12 +286,16 @@ def main():
                     newsletter_sections.append("## School Board Updates\n")
                     newsletter_sections.append("*Could not retrieve School Board data. Please check back later.*\n")
                     status.update(label="School Board: Data retrieval failed", state="error")
+                    
+                    # Show error details in expander
+                    with st.expander("View Error Details"):
+                        st.code(error, language="text")
         
         # Agent 3: Sports
         if run_sports:
             with st.status("Searching for sports news...", expanded=True) as status:
                 st.write("Querying DuckDuckGo for Mustang sports...")
-                sports_text = search_sports_news()
+                sports_text, error = search_sports_news()
                 
                 if sports_text:
                     st.write("Generating sports report with AI...")
@@ -305,6 +313,10 @@ def main():
                     newsletter_sections.append("## Mustang Sports Minute\n")
                     newsletter_sections.append("*Could not retrieve sports data. Please check back later.*\n")
                     status.update(label="Sports: Data retrieval failed", state="error")
+                    
+                    # Show error details in expander
+                    with st.expander("View Error Details"):
+                        st.code(error, language="text")
         
         # Display final newsletter
         newsletter_content = "\n".join(newsletter_sections)
