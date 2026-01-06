@@ -433,14 +433,14 @@ def main():
         
         # Agent 1: City Council
         if run_city_council:
+            council_error = None
             with st.status("Processing City Council agenda...", expanded=True) as status:
                 council_text = None
-                error = None
                 
                 # Priority 1: Use Selenium if enabled
                 if use_selenium and SELENIUM_AVAILABLE:
                     st.write("Using Selenium to render JavaScript...")
-                    council_text, error = scrape_city_council_agenda_selenium()
+                    council_text, council_error = scrape_city_council_agenda_selenium()
                 
                 # Priority 2: Check if user uploaded a PDF
                 elif uploaded_council_pdf:
@@ -457,12 +457,12 @@ def main():
                         if len(text.strip()) > 100:
                             council_text = text[:15000]
                     except Exception as e:
-                        error = f"Error processing uploaded PDF: {str(e)}"
+                        council_error = f"Error processing uploaded PDF: {str(e)}"
                 
                 # Priority 3: Try basic scraping (will likely fail)
                 else:
                     st.write("Attempting basic scraping...")
-                    council_text, error = scrape_city_council_agenda(debug=debug_mode, use_selenium=False)
+                    council_text, council_error = scrape_city_council_agenda(debug=debug_mode, use_selenium=False)
                 
                 if council_text:
                     st.write("Generating summary with AI...")
@@ -485,17 +485,18 @@ def main():
                         newsletter_sections.append("## City Hall Updates\n")
                         newsletter_sections.append("*City Council data not available. Enable Selenium or upload PDF manually.*\n")
                         status.update(label="City Council: Manual action needed", state="error")
-                    
-                    # Show error/debug details in expander
-                    if error:
-                        with st.expander("View Debug/Error Details"):
-                            st.code(error, language="text")
+            
+            # Show error/debug details OUTSIDE the status block
+            if council_error:
+                with st.expander("View City Council Debug/Error Details"):
+                    st.code(council_error, language="text")
         
         # Agent 2: School Board
         if run_school_board:
+            school_error = None
             with st.status("Scraping School Board agenda...", expanded=True) as status:
                 st.write("Fetching latest meeting documents...")
-                school_text, error = scrape_school_board_agenda(debug=debug_mode)
+                school_text, school_error = scrape_school_board_agenda(debug=debug_mode)
                 
                 if school_text:
                     st.write("Generating summary with AI...")
@@ -518,10 +519,11 @@ def main():
                         newsletter_sections.append("## School Board Updates\n")
                         newsletter_sections.append("*Could not retrieve School Board data. Please check back later.*\n")
                         status.update(label="School Board: Data retrieval failed", state="error")
-                    
-                    # Show error/debug details in expander
-                    with st.expander("View Debug/Error Details"):
-                        st.code(error, language="text")
+            
+            # Show error/debug details OUTSIDE the status block
+            if school_error:
+                with st.expander("View School Board Debug/Error Details"):
+                    st.code(school_error, language="text")
         
         # Agent 3: Sports
         if run_sports:
