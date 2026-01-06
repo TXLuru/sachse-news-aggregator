@@ -4,9 +4,7 @@ from bs4 import BeautifulSoup
 from pypdf import PdfReader
 from io import BytesIO
 from openai import OpenAI
-import traceback
 from datetime import datetime
-import re
 
 # Check if Selenium is available (Optional)
 try:
@@ -27,9 +25,6 @@ def scrape_city_council_agenda(debug=False, use_selenium=False):
         response.raise_for_status()
         
         soup = BeautifulSoup(response.content, 'html.parser')
-        
-        if debug:
-            return None, f"Debug mode: Found {len(soup.find_all('a'))} links."
         
         all_links = soup.find_all('a', href=True)
         
@@ -105,7 +100,6 @@ def scrape_school_board_agenda(debug=False):
                             if len(text.strip()) > 100:
                                 return text[:15000], None
                                 
-                # Fallback to HTML content
                 main = agenda_soup.find('div', class_='main-content') or agenda_soup.find('main')
                 if main:
                     return main.get_text(separator='\n')[:15000], None
@@ -117,8 +111,9 @@ def scrape_school_board_agenda(debug=False):
 
 def search_sports_news(debug=False):
     """
-    AI-FIRST APPROACH: 
-    Grab raw text from MaxPreps and let GPT-4o sort it out.
+    FULL RAW TEXT APPROACH: 
+    We do NOT filter the text. We send the raw page structure to GPT-4o.
+    This ensures we don't accidentally delete "Team Names" or "Times".
     """
     try:
         events_url = "https://www.maxpreps.com/tx/sachse/sachse-mustangs/events/"
@@ -129,21 +124,15 @@ def search_sports_news(debug=False):
         
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # KEY CHANGE: Use ' | ' separator. This prevents words from getting mashed together.
+        # Grab text with specific separator to keep structure
         full_text = soup.get_text(separator=' | ')
         
-        # Simple Filter: Remove totally irrelevant lines
-        relevant_lines = []
-        for line in full_text.split('\n'):
-            clean = line.strip()
-            if len(clean) > 2:
-                # Keep lines with numbers or sport keywords
-                if any(char.isdigit() for char in clean) or \
-                   any(word in clean.lower() for word in ['basketball', 'soccer', 'football', 'baseball', 'volleyball', 'vs', '@', 'sachse', 'mustangs']):
-                    relevant_lines.append(clean)
+        # Only simple cleanup: remove empty lines
+        lines = [line.strip() for line in full_text.split('\n') if line.strip()]
+        final_text = "\n".join(lines)
         
-        final_text = "\n".join(relevant_lines)
-        return final_text[:20000], None 
+        # Limit to 25,000 characters (approx 6k tokens) to fit in context window comfortably
+        return final_text[:25000], None 
         
     except Exception as e:
         return None, str(e)
@@ -163,40 +152,41 @@ def summarize_with_llm(client, content, section_type):
         Content: {content}"""
 
     elif section_type == "sports":
-        # UPDATED PROMPT FOR TABLE OUTPUT
-        prompt = f"""You are a Sports Editor. I am providing you with RAW, MESSY text from a schedule website.
+        # UPDATED PROMPT: STRICT TABLE FORMATTING
+        prompt = f"""You are a Sports Editor. I am providing you with RAW text from a website.
 
-        **Your Goal:** Find the Upcoming Schedule and format it as a Markdown Table.
+        **Your Goal:** Extract the upcoming game schedule into a clean Markdown table.
 
-        **Rules:**
-        1. **Look Ahead:** The text is messy. The opponent name might be on the line *after* the sport or time. 
-        2. **Ignore History:** Ignore games with scores (e.g., "L 50-60"). Only list future games.
-        3. **Infer Opponents:** If you see "vs" or "@" followed by a name, that is the opponent.
+        **Data Extraction Rules:**
+        1. **Look Everywhere:** The time (e.g. 6:00pm) and opponent might be separated by other text. Look at the lines surrounding the Sport/Date.
+        2. **Future Only:** Ignore games with scores (e.g. "W 50-40"). Only list future games.
+        3. **Infer Opponents:** If you see a school name (like "Rowlett", "Naaman Forest", "Garland") near the sport, that is the opponent.
         
         **Output Format:**
         
         **Mustang Sports Minute**
-        [Write 2 sentences about the team's recent performance/record found in the text]
+        [Write 2 sentences about the team's momentum]
 
         **This Week's Schedule**
+        
         | Date | Sport | Opponent | Time |
-        | :--- | :--- | :--- | :--- |
+        |---|---|---|---|
         | [Date] | [Sport] | [Opponent] | [Time] |
 
-        (If a specific detail is missing in the text, write "TBD")
+        *(If a detail is absolutely missing, write "TBD")*
 
-        **Raw Text to Analyze:**
+        **Raw Text:**
         {content}"""
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",  # <--- CHANGED TO GPT-4o (Smartest Model)
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": "You are a professional local news writer."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.5,
-            max_tokens=1000
+            temperature=0.3, # Lower temp = more precise formatting
+            max_tokens=1500
         )
         return response.choices[0].message.content
     except Exception as e:
