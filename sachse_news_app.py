@@ -28,15 +28,28 @@ def scrape_city_council_agenda_selenium():
         return None, "Selenium not installed. Install with: pip install selenium webdriver-manager"
     
     try:
-        # Setup headless Chrome
+        # Setup headless Chrome for Streamlit Cloud compatibility
         chrome_options = Options()
         chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--disable-software-rasterizer")
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-setuid-sandbox")
+        chrome_options.add_argument("--remote-debugging-port=9222")
         
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+        # Try to use system Chrome on Streamlit Cloud
+        chrome_options.binary_location = "/usr/bin/chromium"
+        
+        try:
+            # Try without webdriver-manager first (for Streamlit Cloud)
+            service = Service("/usr/bin/chromedriver")
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+        except:
+            # Fallback to webdriver-manager (for local)
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=chrome_options)
         
         try:
             # Navigate to CivicClerk portal
