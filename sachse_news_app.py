@@ -158,10 +158,7 @@ def scrape_school_board_agenda(debug=False):
 
 def search_sports_news(debug=False):
     """Search for Sachse High School Mustangs sports news via MaxPreps."""
-    import time
-    
     try:
-        # Try MaxPreps direct scraping first
         maxpreps_url = "https://www.maxpreps.com/tx/sachse/sachse-mustangs/"
         
         response = requests.get(maxpreps_url, timeout=30, headers={
@@ -174,66 +171,75 @@ def search_sports_news(debug=False):
         if debug:
             debug_info = f"MaxPreps URL: {maxpreps_url}\n\n"
             debug_info += f"Response Status: {response.status_code}\n\n"
+            debug_info += f"Page title: {soup.find('title').get_text() if soup.find('title') else 'N/A'}\n\n"
             
-            # Look for game scores
-            scores = soup.find_all(class_=['score', 'game', 'result'])[:10]
-            debug_info += f"Found {len(scores)} score elements\n\n"
-            for i, score in enumerate(scores[:5]):
-                debug_info += f"Score {i}: {score.get_text(strip=True)[:200]}\n"
+            page_text = soup.get_text()
+            if "Sachse Scores" in page_text:
+                debug_info += "Found 'Sachse Scores' section\n"
+            if "Today" in page_text:
+                debug_info += "Found 'Today' games\n"
             
-            return None, debug_info
+            return None, debug_info[:2000]
         
-        # Parse MaxPreps for recent games
-        combined_text = "Recent Sachse High School Mustangs Sports:\n\n"
+        # Parse text content for game information
+        page_text = soup.get_text(separator='\n')
+        lines = [line.strip() for line in page_text.split('\n') if line.strip()]
         
-        # Find game containers
-        games = soup.find_all(['div', 'article'], class_=lambda x: x and ('game' in x.lower() or 'contest' in x.lower()))
+        combined_text = "Sachse High School Mustangs - Recent & Upcoming Games:\n\n"
         
-        if not games:
-            # Try alternative selectors
-            games = soup.find_all(['div', 'tr'], attrs={'data-game': True})
+        # Track what we're parsing
+        in_scores_section = False
+        games_found = 0
+        current_game = []
         
-        for i, game in enumerate(games[:10], 1):
-            game_text = game.get_text(strip=True)
-            if len(game_text) > 20:
-                combined_text += f"Game {i}: {game_text}\n\n"
+        for i, line in enumerate(lines):
+            # Start capturing when we hit the scores section
+            if "Sachse Scores" in line:
+                in_scores_section = True
+                continue
+            
+            # Stop if we've moved past the scores section
+            if in_scores_section and any(x in line for x in ["Latest Videos", "Pro Photos", "School Info"]):
+                break
+            
+            if in_scores_section and games_found < 15:
+                # Detect sport types (V. = Varsity, JV. = Junior Varsity, F. = Freshman)
+                if any(sport in line for sport in ['V. Girls Basketball', 'V. Boys Basketball', 'V. Girls Soccer', 'V. Boys Soccer', 'V. Football', 'JV.', 'F.']):
+                    if current_game:
+                        # Save previous game
+                        combined_text += " | ".join(current_game) + "\n"
+                        games_found += 1
+                        current_game = []
+                    current_game.append(line)
+                    
+                # Capture opponent info
+                elif line and len(line) > 2 and not line.isdigit() and current_game:
+                    # Skip pure time indicators
+                    if 'pm' not in line.lower() and 'am' not in line.lower():
+                        if len(current_game) < 4:  # Limit details per game
+                            current_game.append(line)
+                
+                # Capture game time/date
+                elif ('Today' in line or 'pm' in line.lower() or 'am' in line.lower() or '/' in line) and current_game:
+                    current_game.append(line)
+                    # Save complete game
+                    combined_text += " | ".join(current_game) + "\n\n"
+                    games_found += 1
+                    current_game = []
         
-        if len(combined_text) > 100:
+        # Add any remaining game
+        if current_game:
+            combined_text += " | ".join(current_game) + "\n"
+        
+        if len(combined_text) > 200:
             return combined_text[:8000], None
         
-        # Fallback to DuckDuckGo with retry
-        st.write("MaxPreps scraping unsuccessful, trying DuckDuckGo...")
-        ddgs = DDGS()
-        query = "Sachse High School Mustangs sports results last week"
-        
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                results = ddgs.text(query, max_results=10)
-                break
-            except Exception as e:
-                if "Ratelimit" in str(e) and attempt < max_retries - 1:
-                    time.sleep(2 ** attempt)
-                    continue
-                else:
-                    raise
-        
-        if not results:
-            return None, "No search results returned from DuckDuckGo"
-        
-        combined_text = "Sachse High School Mustangs Sports News:\n\n"
-        for i, result in enumerate(results, 1):
-            combined_text += f"Source {i}: {result.get('title', '')}\n"
-            combined_text += f"{result.get('body', '')}\n\n"
-        
-        return combined_text[:8000], None
+        # Fallback: return generic message with link
+        return None, "Unable to parse game information automatically. View schedule at: https://www.maxpreps.com/tx/sachse/sachse-mustangs/"
         
     except Exception as e:
         error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
-        
-        if "Ratelimit" in str(e):
-            error_details += "\n\nDuckDuckGo is rate limiting requests. Try manually checking: https://www.maxpreps.com/tx/sachse/sachse-mustangs/"
-        
+        error_details += "\n\nView games manually at: https://www.maxpreps.com/tx/sachse/sachse-mustangs/"
         return None, error_details
 
 
@@ -266,15 +272,19 @@ Write in a clear, conversational style. Keep it concise (200-300 words). Use bul
 Content:
 {content}""",
         
-        "sports": """You are a high school sports reporter. Write a "Mustang Sports Minute" based on the following search results about Sachse High School athletics.
+        "sports": """You are a high school sports reporter. Write a "Mustang Sports Minute" based on the following game information about Sachse High School athletics.
 
 Focus on:
-- Recent game scores and highlights
-- Standout player performances
-- Upcoming important games
-- Team standings or playoff implications
+- Recent game scores and results
+- Standout performances (if mentioned)
+- Upcoming important games this week
+- Overall team records and momentum
 
-Write in an energetic, positive style. Keep it concise (150-200 words).
+Organize into two sections:
+1. **Recent Results** - Summarize recent game outcomes
+2. **This Week's Schedule** - List upcoming games with opponents and times
+
+Write in an energetic, positive style. Keep it concise (150-250 words).
 
 Content:
 {content}"""
