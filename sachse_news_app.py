@@ -111,9 +111,9 @@ def scrape_school_board_agenda(debug=False):
 
 def search_sports_news(debug=False):
     """
-    FULL RAW TEXT APPROACH: 
-    We do NOT filter the text. We send the raw page structure to GPT-4o.
-    This ensures we don't accidentally delete "Team Names" or "Times".
+    AI-FIRST APPROACH (UNFILTERED):
+    Grab EVERY piece of text from the page. Do not filter lines.
+    This ensures times like '6:00' (without PM) are not deleted.
     """
     try:
         events_url = "https://www.maxpreps.com/tx/sachse/sachse-mustangs/events/"
@@ -124,15 +124,18 @@ def search_sports_news(debug=False):
         
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Grab text with specific separator to keep structure
-        full_text = soup.get_text(separator=' | ')
+        # Grab strictly text, separating by newline
+        # Use a distinctive separator so the AI knows where lines break
+        full_text = soup.get_text(separator='\n')
         
-        # Only simple cleanup: remove empty lines
-        lines = [line.strip() for line in full_text.split('\n') if line.strip()]
+        # Clean up excessive whitespace but KEEP ALL CONTENT
+        lines = [line.strip() for line in full_text.split('\n') if len(line.strip()) > 0]
+        
+        # Rejoin with newlines
         final_text = "\n".join(lines)
         
-        # Limit to 25,000 characters (approx 6k tokens) to fit in context window comfortably
-        return final_text[:25000], None 
+        # Limit to 30,000 chars (approx 7k tokens) - GPT-4o can handle this easily
+        return final_text[:30000], None 
         
     except Exception as e:
         return None, str(e)
@@ -152,15 +155,15 @@ def summarize_with_llm(client, content, section_type):
         Content: {content}"""
 
     elif section_type == "sports":
-        # UPDATED PROMPT: STRICT TABLE FORMATTING
-        prompt = f"""You are a Sports Editor. I am providing you with RAW text from a website.
+        # UPDATED PROMPT: AGGRESSIVE TIME FINDING
+        prompt = f"""You are a Sports Editor. I am providing you with RAW text from a schedule website.
 
         **Your Goal:** Extract the upcoming game schedule into a clean Markdown table.
 
-        **Data Extraction Rules:**
-        1. **Look Everywhere:** The time (e.g. 6:00pm) and opponent might be separated by other text. Look at the lines surrounding the Sport/Date.
-        2. **Future Only:** Ignore games with scores (e.g. "W 50-40"). Only list future games.
-        3. **Infer Opponents:** If you see a school name (like "Rowlett", "Naaman Forest", "Garland") near the sport, that is the opponent.
+        **CRITICAL RULES:**
+        1. **Find the Time:** The time might be listed simply as "6:00" or "7:30" without "pm". It might be inside a "Preview" line. LOOK HARD FOR NUMBERS formatted like times.
+        2. **Infer Opponents:** If you see "vs" or "@" followed by a name, that is the opponent.
+        3. **Future Only:** Ignore past games with scores. Only list upcoming dates.
         
         **Output Format:**
         
@@ -173,8 +176,6 @@ def summarize_with_llm(client, content, section_type):
         |---|---|---|---|
         | [Date] | [Sport] | [Opponent] | [Time] |
 
-        *(If a detail is absolutely missing, write "TBD")*
-
         **Raw Text:**
         {content}"""
     
@@ -185,7 +186,7 @@ def summarize_with_llm(client, content, section_type):
                 {"role": "system", "content": "You are a professional local news writer."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3, # Lower temp = more precise formatting
+            temperature=0.3, 
             max_tokens=1500
         )
         return response.choices[0].message.content
@@ -205,7 +206,6 @@ def main():
     st.sidebar.markdown("---")
     run_council = st.sidebar.checkbox("City Council", value=True)
     
-    # Council Upload Logic
     uploaded_council_pdf = None
     if run_council:
         uploaded_council_pdf = st.sidebar.file_uploader("Or upload Council PDF manually", type=['pdf'], accept_multiple_files=True)
