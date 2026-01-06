@@ -7,9 +7,9 @@ from duckduckgo_search import DDGS
 from openai import OpenAI
 import traceback
 from datetime import datetime
-import re  # Required for the new sports logic
+import re
 
-# Check if Selenium is available (Optional for advanced users)
+# Check if Selenium is available
 try:
     from selenium import webdriver
     from selenium.webdriver.common.by import By
@@ -196,11 +196,9 @@ def search_sports_news(debug=False):
         
         combined_text += "UPCOMING GAMES:\n"
         
-        # Clean lines
         page_text = soup.get_text(separator='\n')
         lines = [line.strip() for line in page_text.split('\n') if line.strip()]
         
-        # Regex setup
         date_pattern = re.compile(r'^(\d{1,2}/\d{1,2})')
         time_pattern = re.compile(r'(\d{1,2}:\d{2})\s*([aApP][mM])?') 
         
@@ -229,18 +227,18 @@ def search_sports_news(debug=False):
                     opponent = ""
                     time = ""
                     
-                    # SCAN THE NEXT 4 LINES FOR DETAILS
+                    # SCAN THE NEXT 5 LINES FOR DETAILS
                     context_block = lines[i+1:i+6] # Look ahead 5 lines
                     
                     for j, scan_line in enumerate(context_block):
-                        s_clean = scan_line.replace('*', '').strip()
+                        # NO STRIPPING OF ASTERISKS - KEEP ORIGINAL TEXT
+                        s_clean = scan_line.strip()
                         s_lower = s_clean.lower()
                         
                         if not s_clean: continue
 
                         # IGNORE JUNK (unless it contains time)
-                        if any(x in s_lower for x in ['preview', 'watch', 'ticket', 'game', 'box score']):
-                            # Check if time is hidden in junk line like "6:00pm Preview"
+                        if any(x in s_lower for x in ['preview', 'watch', 'ticket', 'box score', 'directions']):
                             if not time:
                                 t_match = time_pattern.search(s_clean)
                                 if t_match: time = t_match.group(0)
@@ -251,33 +249,28 @@ def search_sports_news(debug=False):
                             t_match = time_pattern.search(s_clean)
                             if t_match:
                                 time = t_match.group(0)
-                                # If the line was just time, don't treat it as opponent
                                 if len(s_clean) < 9: continue
+
+                        # Is this line another Sport (Header)? If so, stop scanning this block
+                        if any(s in s_clean for s in ['Basketball', 'Soccer', 'Football']) and \
+                           any(t in s_clean for t in ['V.', 'JV.', 'Varsity']):
+                            break
 
                         # FIND OPPONENT
                         if not opponent:
-                            # CASE A: Line starts with 'vs' or '@' (e.g. "@ Flower Mound")
+                            # 1. Look for explicit connectors
                             if s_lower.startswith('vs') or s_lower.startswith('@'):
                                 opponent = s_clean
                             
-                            # CASE B: Previous line was ONLY 'vs'/'@', so this line is the name
-                            elif j > 0:
-                                prev_clean = context_block[j-1].replace('*', '').strip().lower()
-                                if prev_clean in ['vs', '@', 'vs.', 'at']:
-                                    opponent = f"{prev_clean} {s_clean}"
-                            
-                            # CASE C: Implicit Opponent (No 'vs' found, but it's a Capitalized Name)
-                            # Only if we haven't found time yet (Time usually comes after opponent)
-                            elif not time and s_clean[0].isupper() and len(s_clean) > 3:
-                                # Verify it's not a sport name
-                                if not any(x in s_clean for x in ['Basketball', 'Soccer']):
-                                    opponent = s_clean
+                            # 2. Look for implicit names (Aggressive Fallback)
+                            elif len(s_clean) > 2 and not any(char.isdigit() for char in s_clean):
+                                opponent = s_clean
 
-                    # Formatting Fixes
-                    if opponent.lower().startswith('vs') or opponent.lower().startswith('@'):
-                        pass # It's already good
-                    elif opponent: 
-                        opponent = f"vs {opponent}" # Add default "vs" if missing
+                    # Formatting
+                    if opponent and not (opponent.lower().startswith('vs') or opponent.lower().startswith('@')):
+                        opponent = f"vs {opponent}"
+                    if not opponent:
+                        opponent = "vs Opponent TBD" 
 
                     # Save Entry
                     game_sig = f"{current_date}-{sport}"
@@ -300,6 +293,7 @@ def search_sports_news(debug=False):
     except Exception as e:
         error_details = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
         return None, error_details
+
 
 def summarize_with_llm(client, content, section_type):
     """Use OpenAI to summarize content based on section type."""
@@ -356,7 +350,7 @@ Content:
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
-            max_tokens=1000  # Increased token limit to ensure full schedule fits
+            max_tokens=1000
         )
         
         return response.choices[0].message.content
